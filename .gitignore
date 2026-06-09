@@ -1,0 +1,20 @@
+# Build artifacts
+_build/
+cover/
+deps/
+doc/
+.elixir_ls/
+*.beam
+
+# Hex
+hex_metadata.config
+*.tar
+*.lock
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
