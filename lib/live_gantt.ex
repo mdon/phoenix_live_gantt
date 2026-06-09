@@ -77,6 +77,26 @@ defmodule LiveGantt do
   @label_clearance_px 10
 
   @doc """
+  Toggles an id in an `expanded` set — convenience for `on_toggle_expand`
+  handlers so consumers don't re-write the member?/put/delete boilerplate.
+
+  Normalizes the first argument to a `MapSet` (accepts a `MapSet`, a list, or
+  `nil`) and returns a `MapSet`. The id should be the value delivered to your
+  handler under the `"event-id"` param key.
+
+      def handle_event("toggle_subproject", %{"event-id" => id}, socket) do
+        {:noreply, update(socket, :expanded, &LiveGantt.toggle_expanded(&1, id))}
+      end
+  """
+  @spec toggle_expanded(MapSet.t() | list() | nil, term()) :: MapSet.t()
+  def toggle_expanded(%MapSet{} = set, id) do
+    if MapSet.member?(set, id), do: MapSet.delete(set, id), else: MapSet.put(set, id)
+  end
+
+  def toggle_expanded(nil, id), do: MapSet.new([id])
+  def toggle_expanded(list, id) when is_list(list), do: toggle_expanded(MapSet.new(list), id)
+
+  @doc """
   Renders a waterfall/Gantt chart.
 
   ## Attributes
@@ -104,7 +124,22 @@ defmodule LiveGantt do
   attr :zoom, :atom, default: :week
   attr :connectors, :list, default: []
   attr :day_markers, :list, default: []
-  attr :today, Date, default: nil
+
+  attr :day_width_px, :integer,
+    default: nil,
+    doc:
+      "Override the per-zoom pixels-per-day. Use with fit-to-width: pass `LiveGantt.default_day_width_px(zoom)` floored against a viewport-derived value so a short chart fills the container instead of leaving empty space. `nil` uses the zoom default."
+
+  attr :fit_width, :boolean,
+    default: false,
+    doc:
+      "When true (and `enable_hooks` + `id` are set), the container reports its available width to the server via a `\"lg-fit-width\"` event (`%{\"available_px\" => n}`) on mount + resize, so you can recompute `day_width_px` to fill the viewport. The library doesn't resize itself — you own the recompute (see `default_day_width_px/1`)."
+
+  attr :today, :any,
+    default: nil,
+    doc:
+      "Today's date (a `Date`), or a `DateTime`/`NaiveDateTime` for a precise 'now' line — recommended at `:hour` zoom, where the marker lands at the exact time and the current-hour column highlights. Defaults to `Date.utc_today()`."
+
   attr :row_height, :string, default: "2.5rem"
   attr :label_width, :string, default: "14rem"
   attr :on_event_click, :any, default: nil
@@ -112,14 +147,22 @@ defmodule LiveGantt do
   # Sub-project expand/collapse. An event becomes a sub-project by
   # carrying `extra.parent_id => "<other-event-id>"` — the parent
   # then renders as a roll-up bar spanning every descendant's date
-  # range. `expanded` is the SET of sub-project event ids that are
-  # currently expanded (showing their children); anything else stays
-  # collapsed (children hidden, connectors retargeted to the parent
-  # roll-up). `on_toggle_expand` is a phx-click event name fired when
-  # the user toggles a sub-project's chevron — the consumer updates
-  # their `expanded` set in response.
-  attr :expanded, :any, default: nil
-  attr :on_toggle_expand, :any, default: nil
+  # range. ALWAYS include every descendant in `events`; the library
+  # detects a sub-project by finding events that point at it, and
+  # hides the children of collapsed parents itself. Give a sub-project
+  # parent `start: nil, end: nil` so its dates roll up to span its
+  # children (explicit parent dates are left as-is and children can
+  # then visually overflow the bar).
+  attr :expanded, :any,
+    default: nil,
+    doc:
+      "Which sub-projects are expanded (children visible). A `MapSet` or list of expanded event ids, `:all` to expand everything, or `nil` for all collapsed. Collapsed parents' children are hidden and connectors retarget to the visible ancestor."
+
+  attr :on_toggle_expand, :any,
+    default: nil,
+    doc:
+      "phx-click event name fired when a sub-project chevron is toggled. The handler receives the event id under the `\"event-id\"` param key (hyphen). Update your `expanded` set in response — see `LiveGantt.toggle_expanded/2`."
+
   attr :show_progress, :boolean, default: true
   attr :show_today, :boolean, default: true
   attr :show_connectors, :boolean, default: true
@@ -427,6 +470,11 @@ defmodule LiveGantt do
   attr :on_show_earlier, :any, default: nil
   attr :on_show_later, :any, default: nil
 
+  attr :on_show_today, :any,
+    default: nil,
+    doc:
+      "phx-click event for the off-screen Today hint (shown when `today` is outside `date_range`). Wire it to widen the range / jump to today; if nil the hint is informational only. Requires `show_today`."
+
   attr :edge_indicator_class, :string,
     default:
       "lg-edge px-2 py-1 rounded-full bg-base-200/95 border border-base-content/10 text-[0.65rem] font-medium text-base-content/70 shadow-sm hover:bg-base-200 transition-colors"
@@ -458,12 +506,17 @@ defmodule LiveGantt do
     range = assigns.date_range
     total_days = Date.diff(range.last, range.first) + 1
 
-    day_px = day_width_px(assigns.zoom)
+    # `day_width_px` overrides the per-zoom default — e.g. a consumer doing
+    # fit-to-width passes a px-per-day computed from the measured viewport.
+    day_px = assigns.day_width_px || day_width_px(assigns.zoom)
     content_width = total_days * day_px
     row_px = parse_row_height(assigns.row_height)
 
-    # Build column headers
-    columns = build_columns(range, assigns.zoom, day_px)
+    # Build column headers. Thread the resolved `today` (the explicit
+    # `today` attr, else `Date.utc_today()`) so the column highlight
+    # agrees with the today-marker line — both must use the same notion
+    # of "today" or a consumer-supplied `today` highlights nothing.
+    columns = build_columns(range, assigns.zoom, day_px, today)
 
     # --- Sub-project rollup (must run before partition) ---
     # A sub-project parent often has `start: nil, end: nil` and relies
@@ -653,6 +706,7 @@ defmodule LiveGantt do
       |> assign(:subproject_frames, subproject_frames)
       |> assign(:earlier_count, earlier_count)
       |> assign(:later_count, later_count)
+      |> assign(:today_offscreen, today_offscreen_side(today, range))
 
     ~H"""
     <div class="lg-wrap relative" dir={to_string(@dir)}>
@@ -693,8 +747,11 @@ defmodule LiveGantt do
       <%!-- Optional built-in toolbar (zoom switcher, today, prev/next).
            Sits above the scroll container so it doesn't scroll horizontally.
            Callbacks are wired by the consumer; the today button defaults to
-           a JS.dispatch that the LgAutoScroll hook handles when an
-           id + enable_hooks are set. --%>
+           a JS.dispatch that the LgAutoScroll hook handles. That hook is only
+           attached when `enable_hooks` is set, so the default scroll-to-today
+           needs BOTH `id` and `enable_hooks` — otherwise the dispatch has no
+           listener. A custom `on_scroll_today` works without hooks. The button
+           is disabled (not silently dead) when neither path can fire. --%>
       <div :if={@show_header} class={@toolbar_class}>
         <div class="flex items-center gap-2">
           <button
@@ -702,7 +759,11 @@ defmodule LiveGantt do
             type="button"
             class="btn btn-xs btn-ghost lg-today-btn"
             phx-click={today_click_handler(@id, @on_scroll_today)}
-            disabled={is_nil(@on_scroll_today) and is_nil(@id)}
+            disabled={not today_button_functional?(@on_scroll_today, @id, @enable_hooks)}
+            title={
+              if not today_button_functional?(@on_scroll_today, @id, @enable_hooks),
+                do: "Set enable_hooks + id (or on_scroll_today) to enable scroll-to-today"
+            }
           >
             {I18n.label(:today, @translations)}
           </button>
@@ -780,11 +841,40 @@ defmodule LiveGantt do
         {I18n.label(:later_tasks, @translations, %{count: @later_count})} →
       </button>
 
+      <%!-- Off-screen today hint. When `today` falls outside `date_range`, we
+           DON'T widen the axis to reach it — instead a directional pill pins to
+           the edge pointing toward today. Sits below the edge-task indicators so
+           the two never overlap. Clickable when `on_show_today` is wired
+           (e.g. to widen the range / jump to today); otherwise informational. --%>
+      <button
+        :if={@show_today and @today_offscreen == :before}
+        type="button"
+        class={["absolute left-2 z-40 lg-today-edge", @edge_indicator_class]}
+        style={"top: #{edge_indicator_top_px(@show_header) + 32}px"}
+        phx-click={@on_show_today}
+        disabled={is_nil(@on_show_today)}
+        title={I18n.label(:today, @translations)}
+      >
+        ← {I18n.label(:today, @translations)}
+      </button>
+      <button
+        :if={@show_today and @today_offscreen == :after}
+        type="button"
+        class={["absolute right-2 z-40 lg-today-edge", @edge_indicator_class]}
+        style={"top: #{edge_indicator_top_px(@show_header) + 32}px"}
+        phx-click={@on_show_today}
+        disabled={is_nil(@on_show_today)}
+        title={I18n.label(:today, @translations)}
+      >
+        {I18n.label(:today, @translations)} →
+      </button>
+
       <div
         id={@id}
         class={["lg-chart overflow-x-auto bg-base-100", @class]}
         phx-hook={if @enable_hooks, do: "LgAutoScroll"}
         data-auto-scroll-today={to_string(@auto_scroll_today)}
+        data-fit-width={to_string(@fit_width)}
       >
         <div class="inline-flex flex-col relative">
           <%!-- Column headers --%>
@@ -1382,57 +1472,90 @@ defmodule LiveGantt do
 
   # -- Column building (returns columns with pixel widths) --
 
-  defp build_columns(range, :day, day_px) do
+  # Per-hour columns (24 per day). The day's date is shown on the 00:00 column,
+  # the hour number on the rest. The column matching `now` (when `today` carries
+  # a time) is flagged `is_today` so the current hour highlights.
+  defp build_columns(range, :hour, day_px, today) do
+    hour_px = round(day_px / 24)
+    now = if match?(%DateTime{}, today) or match?(%NaiveDateTime{}, today), do: today, else: nil
+
+    for date <- range, hour <- 0..23 do
+      %{
+        label:
+          if(hour == 0, do: "#{I18n.month_name_short(date.month)} #{date.day}", else: "#{hour}"),
+        width_px: hour_px,
+        is_today: hour_is_now?(date, hour, now),
+        non_working: Date.day_of_week(date) in [6, 7]
+      }
+    end
+  end
+
+  defp build_columns(range, :day, day_px, today) do
+    today_date = to_date(today)
+
     Enum.map(range, fn date ->
       %{
         label: "#{date.day}",
         width_px: day_px,
-        is_today: date == Date.utc_today(),
+        is_today: date == today_date,
         non_working: Date.day_of_week(date) in [6, 7]
       }
     end)
   end
 
-  defp build_columns(range, :week, day_px) do
+  defp build_columns(range, :week, day_px, today) do
+    today_date = to_date(today)
     dates = Enum.to_list(range)
 
     dates
     |> Enum.chunk_by(fn d -> {d.year, elem(:calendar.iso_week_number(Date.to_erl(d)), 1)} end)
     |> Enum.map(fn chunk ->
       first = hd(chunk)
-      today = Date.utc_today()
       days_in_chunk = length(chunk)
 
       %{
         label: week_label(first, days_in_chunk),
         width_px: days_in_chunk * day_px,
-        is_today: today in chunk,
+        is_today: today_date in chunk,
         non_working: false
       }
     end)
   end
 
-  defp build_columns(range, :month, day_px) do
+  defp build_columns(range, :month, day_px, today) do
+    today_date = to_date(today)
     dates = Enum.to_list(range)
 
     dates
     |> Enum.chunk_by(fn d -> {d.year, d.month} end)
     |> Enum.map(fn chunk ->
       first = hd(chunk)
-      today = Date.utc_today()
       days_in_chunk = length(chunk)
 
       %{
         label: month_label(first),
         width_px: days_in_chunk * day_px,
-        is_today: today in chunk,
+        is_today: today_date in chunk,
         non_working: false
       }
     end)
   end
 
-  defp build_columns(range, _zoom, day_px), do: build_columns(range, :week, day_px)
+  defp build_columns(range, _zoom, day_px, today),
+    do: build_columns(range, :week, day_px, today)
 
+  @doc """
+  The default pixels-per-day for a zoom level — `:hour` 720, `:day` 40,
+  `:week` 24, `:month` 8. Use it as the floor when computing a fit-to-width
+  `day_width_px` override, so fitting only ever *widens* (and a long chart still
+  scrolls at its natural density).
+  """
+  @spec default_day_width_px(atom()) :: pos_integer()
+  def default_day_width_px(zoom), do: day_width_px(zoom)
+
+  # `:hour` zoom makes a day 720px wide (24 × 30px/hour) so intra-day bars and
+  # per-hour columns are legible. The wide content scrolls.
+  defp day_width_px(:hour), do: 720
   defp day_width_px(:day), do: 40
   defp day_width_px(:week), do: 24
   defp day_width_px(:month), do: 8
@@ -1479,31 +1602,56 @@ defmodule LiveGantt do
 
   # -- Bar geometry (pixel-based) --
 
+  # --- Continuous time→pixel coordinate ---
+  #
+  # The whole chart positions everything (bars, today marker, connector
+  # endpoints, columns) on ONE axis: "fractional days from `range.first`". This
+  # is what lets `:hour` (and finer) zoom work without a second coordinate
+  # engine — zoom only changes `day_px` and column generation.
+  #
+  # `frac_days/2` accepts `Date` (midnight), `NaiveDateTime`, or `DateTime`
+  # (positioned by WALL-CLOCK time, not elapsed seconds, so a DST day isn't 23
+  # or 25 px-hours wide). `x_px/3` rounds to a whole pixel — so for a `Date` at
+  # day/week/month zoom it is byte-identical to the old `Date.diff * day_px`,
+  # keeping existing behavior; sub-day precision is purely additive.
+  defp frac_days(%Date{} = d, range_first), do: Date.diff(d, range_first) * 1.0
+
+  defp frac_days(%NaiveDateTime{} = ndt, range_first),
+    do: NaiveDateTime.diff(ndt, NaiveDateTime.new!(range_first, ~T[00:00:00]), :second) / 86_400
+
+  defp frac_days(%DateTime{} = dt, range_first), do: frac_days(DateTime.to_naive(dt), range_first)
+  defp frac_days(nil, _range_first), do: 0.0
+
+  defp x_px(temporal, range_first, day_px), do: round(frac_days(temporal, range_first) * day_px)
+
   defp bar_geometry(event, range, day_px) do
-    event_start = to_date(event.start)
-    event_end = to_date(LiveGantt.Task.effective_end(event))
-    is_milestone = Date.diff(event_end, event_start) <= 0
+    total_days = Date.diff(range.last, range.first) + 1
+    fs = frac_days(event.start, range.first)
+    fe = frac_days(LiveGantt.Task.effective_end(event), range.first)
+    is_milestone = fe - fs <= 0
 
-    if out_of_range?(event_start, event_end, is_milestone, range) do
-      %{out_of_range: true}
-    else
-      vis_start = max_date(event_start, range.first)
-      vis_end = min_date(event_end, Date.add(range.last, 1))
+    cond do
+      out_of_range_frac?(fs, fe, is_milestone, total_days) ->
+        %{out_of_range: true}
 
-      if is_milestone do
-        left_px = Date.diff(vis_start, range.first) * day_px
-        %{left_px: max(left_px, 0), width_px: 0, milestone: true, out_of_range: false}
-      else
-        duration_days = Date.diff(vis_end, vis_start)
-        left_days = Date.diff(vis_start, range.first)
-        left_px = left_days * day_px
-        # Width in pixels — at least 4px so single-day bars are visible
-        width_px = max(duration_days * day_px, 4)
+      is_milestone ->
+        %{left_px: max(round(fs * day_px), 0), width_px: 0, milestone: true, out_of_range: false}
 
-        %{left_px: max(left_px, 0), width_px: width_px, milestone: false, out_of_range: false}
-      end
+      true ->
+        vis_start = max(fs, 0.0)
+        vis_end = min(fe, total_days * 1.0)
+        left_px = max(round(vis_start * day_px), 0)
+        # Width — at least 4px so a sliver of a bar stays visible.
+        width_px = max(round((vis_end - vis_start) * day_px), 4)
+        %{left_px: left_px, width_px: width_px, milestone: false, out_of_range: false}
     end
   end
+
+  # Overlap test in fractional-day space (relative to range.first, so range
+  # spans [0, total_days)). A milestone is its single instant; a ranged event
+  # is the half-open `[fs, fe)`.
+  defp out_of_range_frac?(fs, _fe, true, total_days), do: fs < 0 or fs >= total_days
+  defp out_of_range_frac?(fs, fe, false, total_days), do: fe <= 0 or fs >= total_days
 
   # True when the event has no overlap with the visible `date_range`.
   # Milestones (zero-duration) are visible iff their single date sits
@@ -2323,13 +2471,10 @@ defmodule LiveGantt do
     # ~1.6px between the arrow tip and the target bar's edge.
     target_ms_gap = if to_is_milestone, do: 10, else: 4
 
-    from_start_px = Date.diff(to_date(from_event.start), range.first) * day_px
-
-    from_end_px =
-      Date.diff(to_date(LiveGantt.Task.effective_end(from_event)), range.first) * day_px
-
-    to_start_px = Date.diff(to_date(to_event.start), range.first) * day_px
-    to_end_px = Date.diff(to_date(LiveGantt.Task.effective_end(to_event)), range.first) * day_px
+    from_start_px = x_px(from_event.start, range.first, day_px)
+    from_end_px = x_px(LiveGantt.Task.effective_end(from_event), range.first, day_px)
+    to_start_px = x_px(to_event.start, range.first, day_px)
+    to_end_px = x_px(LiveGantt.Task.effective_end(to_event), range.first, day_px)
 
     case type do
       :fs ->
@@ -3692,7 +3837,9 @@ defmodule LiveGantt do
 
   defp cycle_walk?(id, target, parents, seen) do
     cond do
-      Map.has_key?(seen, id) -> false
+      Map.has_key?(seen, id) ->
+        false
+
       true ->
         case Map.get(parents, id) do
           nil -> false
@@ -3752,7 +3899,7 @@ defmodule LiveGantt do
   # through the list once depth exceeds list length so deeper
   # nesting still gets a stable color. Passing a single string skips
   # the per-depth logic and always returns that same color.
-  defp frame_color_for(colors, parent_depth) when is_list(colors) and length(colors) > 0 do
+  defp frame_color_for(colors, parent_depth) when is_list(colors) and colors != [] do
     Enum.at(colors, rem(parent_depth, length(colors)))
   end
 
@@ -4324,10 +4471,13 @@ defmodule LiveGantt do
   # repeat it in every action.
   defp phx_value_attrs(nil, event_id), do: [{:"phx-value-event-id", event_id}]
 
+  # The event id is ALWAYS exposed as `phx-value-event-id` (hyphen), matching
+  # the no-value path and the chevron's `on_toggle_expand` — so a handler reads
+  # `%{"event-id" => id}` regardless of whether extra `phx_value` keys were set.
+  # Any keys the action supplies are emitted alongside as `phx-value-<key>`.
   defp phx_value_attrs(%{} = values, event_id) do
-    values
-    |> Map.put_new(:event_id, event_id)
-    |> Enum.map(fn {k, v} -> {:"phx-value-#{k}", v} end)
+    extra = for {k, v} <- values, k not in [:event_id, "event-id"], do: {:"phx-value-#{k}", v}
+    [{:"phx-value-event-id", event_id} | extra]
   end
 
   # Status/progress styling is now driven by component attrs applied
@@ -4338,12 +4488,31 @@ defmodule LiveGantt do
   # -- Today marker helpers --
 
   defp today_in_range?(today, range) do
-    Date.compare(today, range.first) != :lt and Date.compare(today, range.last) != :gt
+    fd = frac_days(today, range.first)
+    fd >= 0 and fd < Date.diff(range.last, range.first) + 1
   end
 
-  defp today_left_px(today, range, day_px) do
-    Date.diff(today, range.first) * day_px + div(day_px, 2)
+  # Which edge today sits past, or nil when it's on-screen. Drives the
+  # off-screen "Today" directional hint (so the axis needn't stretch to reach
+  # a far-away today).
+  defp today_offscreen_side(today, range) do
+    fd = frac_days(today, range.first)
+    total = Date.diff(range.last, range.first) + 1
+
+    cond do
+      fd < 0 -> :before
+      fd >= total -> :after
+      true -> nil
+    end
   end
+
+  # A `Date` today has no time-of-day, so center the marker in its day; a
+  # `DateTime`/`NaiveDateTime` "now" lands at its exact position (precise at
+  # hour zoom).
+  defp today_left_px(%Date{} = today, range, day_px),
+    do: x_px(today, range.first, day_px) + div(day_px, 2)
+
+  defp today_left_px(today, range, day_px), do: x_px(today, range.first, day_px)
 
   # -- Non-working dates --
 
@@ -4393,6 +4562,19 @@ defmodule LiveGantt do
 
   defp today_click_handler(_, _), do: nil
 
+  # The today button can actually scroll iff a custom `on_scroll_today` is
+  # given, OR the default `lg:scroll-today` dispatch has a listener — which
+  # requires both an `id` (the dispatch target) and `enable_hooks` (so the
+  # `LgAutoScroll` hook is attached to that id). Otherwise it's rendered
+  # disabled rather than silently doing nothing.
+  defp today_button_functional?(on_scroll_today, _id, _enable_hooks)
+       when not is_nil(on_scroll_today),
+       do: true
+
+  defp today_button_functional?(_on_scroll_today, id, enable_hooks),
+    do: is_binary(id) and enable_hooks == true
+
+  defp zoom_label(:hour, t), do: I18n.label(:hour, t)
   defp zoom_label(:day, t), do: I18n.label(:day, t)
   defp zoom_label(:week, t), do: I18n.label(:week, t)
   defp zoom_label(:month, t), do: I18n.label(:month, t)
@@ -4408,12 +4590,18 @@ defmodule LiveGantt do
   # -- Date helpers --
 
   defp to_date(%Date{} = d), do: d
+  defp to_date(%Date{} = d), do: d
   defp to_date(%DateTime{} = dt), do: DateTime.to_date(dt)
   defp to_date(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_date(ndt)
   defp to_date(_), do: nil
 
-  defp max_date(a, b), do: if(Date.compare(a, b) == :lt, do: b, else: a)
-  defp min_date(a, b), do: if(Date.compare(a, b) == :gt, do: b, else: a)
+  # True when (date, hour) is the same calendar hour as `now`. `now` is a
+  # DateTime/NaiveDateTime (or nil → never). Drives the current-hour column
+  # highlight at `:hour` zoom.
+  defp hour_is_now?(_date, _hour, nil), do: false
+
+  defp hour_is_now?(date, hour, now),
+    do: date == to_date(now) and hour == now.hour
 
   defp parse_row_height(height) when is_binary(height) do
     case Float.parse(height) do

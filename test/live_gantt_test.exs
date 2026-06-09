@@ -5,8 +5,6 @@ defmodule LiveGanttTest do
   import Phoenix.Component, only: [sigil_H: 2]
   import LiveGantt
 
-  alias LiveGantt.Task
-
   defp render(content), do: rendered_to_string(content)
 
   defp sample_events(base \\ ~D[2026-04-01]) do
@@ -1115,6 +1113,134 @@ defmodule LiveGanttTest do
       html = render(~H"<.gantt events={@events} date_range={@range} />")
 
       refute html =~ "lg-toolbar"
+    end
+
+    test "hour zoom positions bars at sub-day precision from DateTime starts" do
+      # 09:00–11:00 (2h) on day 0 of a 2-day range. At hour zoom day_px = 720
+      # (30px/hour): left = 0.375*720 = 270, width = 2h = 60px.
+      events = [
+        %LiveGantt.Task{
+          id: "t",
+          title: "Two hours",
+          start: ~N[2026-04-01 09:00:00],
+          end: ~N[2026-04-01 11:00:00]
+        }
+      ]
+
+      assigns = %{events: events, range: Date.range(~D[2026-04-01], ~D[2026-04-02])}
+
+      html = render(~H[<.gantt id="h" events={@events} date_range={@range} zoom={:hour} />])
+
+      assert html =~ ~s(left: 270px)
+      assert html =~ ~s(width: 60px)
+      # 24 hour-columns per day × 2 days = 48 columns.
+      assert (html |> String.split("lg-col-header") |> length()) - 1 == 48
+    end
+
+    test "hour zoom highlights the current-hour column when today is a DateTime" do
+      assigns = %{
+        events: [],
+        range: Date.range(~D[2026-04-01], ~D[2026-04-01]),
+        today: ~N[2026-04-01 13:30:00]
+      }
+
+      html =
+        render(
+          ~H[<.gantt id="h" events={@events} date_range={@range} zoom={:hour} today={@today} />]
+        )
+
+      # Some hour column carries the today-highlight class (default
+      # `column_header_today_class` = "bg-primary/10 ...").
+      assert html =~ "lg-col-header"
+      assert html =~ "bg-primary/10"
+    end
+
+    test "day_width_px overrides the per-zoom density (fit-to-width)" do
+      events = [
+        %LiveGantt.Task{id: "t", title: "X", start: ~D[2026-04-01], end: ~D[2026-04-02]}
+      ]
+
+      assigns = %{events: events, range: Date.range(~D[2026-04-01], ~D[2026-04-02])}
+
+      # 2-day range. Default :day zoom is 40px/day (content 80px); override to
+      # 100px/day → content 200px and the 1-day bar is 100px wide.
+      html =
+        render(
+          ~H[<.gantt id="g" events={@events} date_range={@range} zoom={:day} day_width_px={100} />]
+        )
+
+      assert html =~ "width: 200px"
+      assert html =~ "left: 0px; width: 100px"
+    end
+
+    test "default_day_width_px/1 exposes the per-zoom defaults" do
+      assert LiveGantt.default_day_width_px(:hour) == 720
+      assert LiveGantt.default_day_width_px(:day) == 40
+      assert LiveGantt.default_day_width_px(:week) == 24
+      assert LiveGantt.default_day_width_px(:month) == 8
+    end
+
+    test "today button is disabled when it can't actually scroll (no hooks, no handler)" do
+      assigns = %{events: sample_events(), range: sample_range()}
+
+      # id present but enable_hooks off + no on_scroll_today → the lg:scroll-today
+      # dispatch has no listener, so the button is disabled, not silently dead.
+      html =
+        render(
+          ~H[<.gantt id="g" events={@events} date_range={@range} show_header={true} on_zoom_change="z" />]
+        )
+
+      assert html =~ ~r/lg-today-btn[^>]*\sdisabled/
+    end
+
+    test "shows an off-screen Today hint at the edge instead of widening the axis" do
+      # sample_range/0 is April 2026; today is far after → the axis stays put
+      # and a right-edge 'Today →' hint appears. No today marker line (it would
+      # have no in-range position).
+      assigns = %{events: sample_events(), range: sample_range(), today: ~D[2026-12-25]}
+
+      html =
+        render(~H[<.gantt id="lg" events={@events} date_range={@range} today={@today} />])
+
+      assert html =~ "lg-today-edge"
+      assert html =~ "Today →"
+      # The vertical marker LINE (distinctive `w-0.5 bg-error`) is NOT drawn.
+      refute html =~ "w-0.5 bg-error"
+
+      # A today inside the range shows the marker line, not the edge hint.
+      assigns = %{assigns | today: ~D[2026-04-15]}
+
+      in_range =
+        render(~H[<.gantt id="lg" events={@events} date_range={@range} today={@today} />])
+
+      refute in_range =~ "lg-today-edge"
+      assert in_range =~ "w-0.5 bg-error"
+    end
+
+    test "today button is enabled with enable_hooks + id, or a custom on_scroll_today" do
+      assigns = %{events: sample_events(), range: sample_range()}
+
+      with_hooks =
+        render(~H[<.gantt
+  id="g"
+  events={@events}
+  date_range={@range}
+  show_header={true}
+  enable_hooks={true}
+  on_zoom_change="z"
+/>])
+
+      with_handler =
+        render(~H[<.gantt
+  events={@events}
+  date_range={@range}
+  show_header={true}
+  on_scroll_today="scroll"
+  on_zoom_change="z"
+/>])
+
+      refute with_hooks =~ ~r/lg-today-btn[^>]*\sdisabled/
+      refute with_handler =~ ~r/lg-today-btn[^>]*\sdisabled/
     end
 
     test "renders with custom label width" do
@@ -2528,6 +2654,9 @@ defmodule LiveGanttTest do
 
       assert html =~ ~s(phx-value-event-id="t1")
       assert html =~ ~s(phx-value-source="popover")
+      # The action's event id uses the hyphenated key (consistent with the
+      # no-value path + the chevron), never the underscore form.
+      refute html =~ "phx-value-event_id"
     end
 
     test "renders <a> when action has :href" do
@@ -2539,7 +2668,9 @@ defmodule LiveGanttTest do
         render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
 
       assert html =~ ~s(<a href="/events/t1")
-      refute html =~ "<button"
+      # The action itself is an <a>, not a <button> — scope to the action so
+      # unrelated chrome buttons (toolbar, edge/today hints) don't false-fail.
+      refute html =~ ~r/<button[^>]*lg-bar-action/
     end
 
     test "popover starts hidden (hidden class present in default class)" do
@@ -3371,9 +3502,7 @@ defmodule LiveGanttTest do
       assigns = %{events: events, range: sample_range()}
 
       html =
-        render(
-          ~H[<.gantt id="lg" events={@events} date_range={@range} expanded={:all} />]
-        )
+        render(~H[<.gantt id="lg" events={@events} date_range={@range} expanded={:all} />])
 
       # Parent must render — its dates are rolled up from the children
       # BEFORE partition runs (otherwise nil start drops it).
@@ -3423,10 +3552,14 @@ defmodule LiveGanttTest do
       assigns = %{events: events, range: sample_range(), connectors: connectors}
 
       html_a =
-        render(~H[<.gantt id="alpha" events={@events} date_range={@range} connectors={@connectors} />])
+        render(
+          ~H[<.gantt id="alpha" events={@events} date_range={@range} connectors={@connectors} />]
+        )
 
       html_b =
-        render(~H[<.gantt id="beta" events={@events} date_range={@range} connectors={@connectors} />])
+        render(
+          ~H[<.gantt id="beta" events={@events} date_range={@range} connectors={@connectors} />]
+        )
 
       # Marker defs are id-scoped
       assert html_a =~ ~s(id="lg-arrow-alpha")
@@ -3437,6 +3570,19 @@ defmodule LiveGanttTest do
       # And do NOT cross-reference each other's markers
       refute html_a =~ "url(#lg-arrow-beta)"
       refute html_b =~ "url(#lg-arrow-alpha)"
+    end
+  end
+
+  describe "toggle_expanded/2" do
+    test "adds an absent id and removes a present one in a MapSet" do
+      assert LiveGantt.toggle_expanded(MapSet.new(), "a") == MapSet.new(["a"])
+      assert LiveGantt.toggle_expanded(MapSet.new(["a", "b"]), "a") == MapSet.new(["b"])
+    end
+
+    test "normalizes nil and lists to a MapSet" do
+      assert LiveGantt.toggle_expanded(nil, "a") == MapSet.new(["a"])
+      assert LiveGantt.toggle_expanded(["a"], "b") == MapSet.new(["a", "b"])
+      assert LiveGantt.toggle_expanded(["a", "b"], "a") == MapSet.new(["b"])
     end
   end
 end

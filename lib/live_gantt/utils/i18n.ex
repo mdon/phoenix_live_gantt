@@ -38,6 +38,7 @@ defmodule LiveGantt.Utils.I18n do
     month: "Month",
     week: "Week",
     day: "Day",
+    hour: "Hour",
     task: "Task",
     ungrouped: "Ungrouped",
     prev: "Previous",

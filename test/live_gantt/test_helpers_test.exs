@@ -1,7 +1,6 @@
 defmodule LiveGantt.TestHelpersTest do
   use ExUnit.Case, async: true
 
-  alias LiveGantt.Task
   alias LiveGantt.TestHelpers
 
   defp fanout_events do

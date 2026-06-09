@@ -1,7 +1,6 @@
 defmodule LiveGantt.InspectorTest do
   use ExUnit.Case, async: true
 
-  alias LiveGantt.Task
   alias LiveGantt.Inspector
   alias LiveGantt.TestHelpers
 
