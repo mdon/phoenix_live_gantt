@@ -3,7 +3,7 @@ defmodule LiveGantt.MixProject do
 
   @version "0.1.0"
   @description "Phoenix LiveView Gantt chart with dependency arrows, sub-projects, and click-to-detail popovers"
-  @source_url "https://github.com/BeamLabEU/live_gantt"
+  @source_url "https://github.com/mdon/live_gantt"
 
   def project do
     [
@@ -40,7 +40,7 @@ defmodule LiveGantt.MixProject do
   defp package do
     [
       name: "live_gantt",
-      maintainers: ["BeamLab EU"],
+      maintainers: ["mdon"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE CHANGELOG.md)
