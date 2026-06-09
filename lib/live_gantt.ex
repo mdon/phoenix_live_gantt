@@ -47,7 +47,6 @@ defmodule LiveGantt do
 
   use Phoenix.Component
 
-  alias LiveGantt.Task
   alias LiveGantt.Utils.{I18n, Safe}
   alias LiveGantt.PathFormat
   alias Phoenix.LiveView.JS
@@ -408,7 +407,7 @@ defmodule LiveGantt do
   attr :id, :string,
     default: nil,
     doc:
-      "Stable DOM id. Required when `show_header` is true OR `auto_scroll_today` is on, so JS dispatches target the right Waterfall instance when multiple are on the page."
+      "Stable DOM id. Required when `show_header` is true OR `auto_scroll_today` is on, so JS dispatches target the right gantt instance when multiple are on the page."
 
   attr :show_header, :boolean, default: false
   attr :show_zoom_switcher, :boolean, default: true
@@ -453,6 +452,8 @@ defmodule LiveGantt do
     doc: "Extra content rendered at the right of the toolbar, after the zoom switcher."
 
   def gantt(assigns) do
+    validate_event_ids!(assigns.events)
+
     today = assigns.today || Date.utc_today()
     range = assigns.date_range
     total_days = Date.diff(range.last, range.first) + 1
@@ -464,23 +465,32 @@ defmodule LiveGantt do
     # Build column headers
     columns = build_columns(range, assigns.zoom, day_px)
 
+    # --- Sub-project rollup (must run before partition) ---
+    # A sub-project parent often has `start: nil, end: nil` and relies
+    # on children's dates being rolled up to position it. If we partition
+    # FIRST, those nil-date parents would be silently dropped before
+    # their dates are computed — losing the entire sub-project — so we
+    # roll up against the raw event list before classifying by range.
+    rolled_up_events =
+      assigns.events
+      |> build_event_tree()
+      |> then(&rollup_subproject_dates(assigns.events, &1))
+
     # Partition events by whether they overlap the visible `date_range`.
     # Out-of-range events are filtered from rendering entirely (no row, no
     # bar) but counted for the edge indicators ("← N earlier / N later →")
     # so the user knows tasks exist outside the current window.
     {in_range_events, earlier_count, later_count} =
-      partition_events_by_range(assigns.events, range)
+      partition_events_by_range(rolled_up_events, range)
 
-    # --- Sub-project processing ---
-    # Build a parent/child tree of in-range events, synthesize roll-up
-    # date ranges for sub-projects that don't carry explicit dates,
-    # filter to only visible events (children of collapsed parents
-    # are hidden), and retarget connector endpoints up the tree so
-    # arrows pointing to/from hidden children attach to the visible
-    # roll-up ancestor instead.
-    expanded_set = normalize_expanded(assigns.expanded)
+    # --- Visibility + retargeting ---
+    # Re-build the parent/child tree on the in-range subset (children of
+    # out-of-range parents become top-level), then filter to only visible
+    # events (children of collapsed parents are hidden), and retarget
+    # connector endpoints up the tree so arrows pointing to/from hidden
+    # children attach to the visible roll-up ancestor instead.
+    expanded_set = normalize_expanded(assigns.expanded, in_range_events)
     event_tree = build_event_tree(in_range_events)
-    in_range_events = rollup_subproject_dates(in_range_events, event_tree)
     visible = visible_events(in_range_events, event_tree, expanded_set)
     retargeted_connectors = retarget_connectors(assigns.connectors, event_tree, expanded_set)
 
@@ -592,6 +602,7 @@ defmodule LiveGantt do
     # Bundle the ambient routing context so the per-connector builders
     # don't have to thread 8+ positional args each.
     connector_ctx = %{
+      chart_id: assigns.id,
       events_by_id: events_by_id,
       row_positions: row_positions,
       range: range,
@@ -651,7 +662,7 @@ defmodule LiveGantt do
          Combines opacity + grayscale so colored bars actually read as
          "greyed out" (opacity alone leaves brand colors visible).
          Inline so the feature works even when consumers don't import
-         the optional live_calendar.css. --%>
+         the package CSS. --%>
       <style>
         .lg-faded {
           opacity: 0.3 !important;
@@ -871,12 +882,16 @@ defmodule LiveGantt do
                 <%!-- Label popover — same shape as the bar popover but
                    anchored to the label row's y. Sibling of the row,
                    positioned absolutely against the label column (which
-                   is `relative`). --%>
+                   is `relative`).
+
+                   `phx-update="ignore"` matches the bar popover so the
+                   JS-applied `hidden` class survives LiveView diffs. --%>
                 <div
                   id={label_pop_id}
                   class={["lg-label-popover", @label_popover_class]}
                   style={label_popover_style(@row_positions, event.id, @row_px)}
                   data-popover-for={label_id}
+                  phx-update="ignore"
                   role="dialog"
                   aria-label={"Details for #{event.title}"}
                 >
@@ -1093,12 +1108,19 @@ defmodule LiveGantt do
                        it. Always rendered so any bar can show its full
                        title; the action row only appears when actions
                        exist. Hidden by default; the LgBarPopover
-                       hook toggles `hidden` on bar click. --%>
+                       hook toggles `hidden` on bar click.
+
+                       `phx-update="ignore"` keeps the JS-applied `hidden`
+                       class (and any toggled state) from being wiped on
+                       every LiveView diff. The popover's content reflects
+                       the initial server render — re-rendering would
+                       require remounting (e.g. swapping the bar id). --%>
                     <div
                       id={popover_id}
                       class={["lg-bar-popover", @bar_popover_class]}
                       style={popover_style(bar, @row_px)}
                       data-popover-for={bar_id}
+                      phx-update="ignore"
                       role="dialog"
                       aria-label={"Details for #{event.title}"}
                     >
@@ -1172,7 +1194,7 @@ defmodule LiveGantt do
                      class (e.g. `text-success` on the path) recolor BOTH the
                      line and its arrowhead consistently. --%>
                   <marker
-                    id="lg-arrow"
+                    id={"lg-arrow-#{@id}"}
                     viewBox="0 0 10 10"
                     refX="6"
                     refY="5"
@@ -1184,7 +1206,7 @@ defmodule LiveGantt do
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
                   </marker>
                   <marker
-                    id="lg-arrow-invalid"
+                    id={"lg-arrow-invalid-#{@id}"}
                     viewBox="0 0 10 10"
                     refX="6"
                     refY="5"
@@ -1196,7 +1218,7 @@ defmodule LiveGantt do
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
                   </marker>
                   <marker
-                    id="lg-arrow-critical"
+                    id={"lg-arrow-critical-#{@id}"}
                     viewBox="0 0 10 10"
                     refX="6"
                     refY="5"
@@ -1741,7 +1763,7 @@ defmodule LiveGantt do
   #   M x1 y1 H seg1_x V seg1_y H seg2_x V seg2_y ... H stop V y2 H stop
   # Built directly here since PathFormat only owns 3- and 5-segment
   # forms; this is a multi-hop shape only used by the consolidator.
-  defp rewrite_forward_segments(%{path: p, x1: x1, y1: y1, y2: y2, arrow_stop: stop}, segments) do
+  defp rewrite_forward_segments(%{path: p, x1: x1, y1: y1, y2: _y2, arrow_stop: stop}, segments) do
     # Each segment is {column_x, end_y_of_that_column}. The last
     # segment's end_y is y2.
     middle =
@@ -2071,7 +2093,7 @@ defmodule LiveGantt do
       stroke_width: style.stroke_width,
       opacity: style.opacity,
       dasharray: style.dasharray,
-      marker_ref: resolve_marker(backward?, conn.critical)
+      marker_ref: resolve_marker(backward?, conn.critical, ctx.chart_id)
     }
   end
 
@@ -2189,9 +2211,16 @@ defmodule LiveGantt do
     }
   end
 
-  defp resolve_marker(true, _), do: "url(#lg-arrow-invalid)"
-  defp resolve_marker(_, true), do: "url(#lg-arrow-critical)"
-  defp resolve_marker(_, _), do: "url(#lg-arrow)"
+  # Marker ids are scoped to the chart instance id so multiple gantts on
+  # one page don't share/override each other's `<defs>` entries (the
+  # second chart's paths would otherwise reference the first chart's
+  # markers and recolor with the wrong currentColor).
+  defp resolve_marker(true, _, chart_id), do: "url(##{marker_id("lg-arrow-invalid", chart_id)})"
+  defp resolve_marker(_, true, chart_id), do: "url(##{marker_id("lg-arrow-critical", chart_id)})"
+  defp resolve_marker(_, _, chart_id), do: "url(##{marker_id("lg-arrow", chart_id)})"
+
+  defp marker_id(base, nil), do: base
+  defp marker_id(base, chart_id), do: "#{base}-#{chart_id}"
 
   defp resolve_bool(nil, default), do: default
   defp resolve_bool(value, _default), do: value
@@ -3393,21 +3422,62 @@ defmodule LiveGantt do
   # Out-of-range events are dropped from all downstream rendering (no row,
   # no bar, no connector) but the counts are surfaced as edge indicators
   # so the user sees there's more data outside the window.
+  # Validate event ids are unique across the entire input list. Duplicate
+  # ids would produce duplicate DOM element ids (bar wrappers, popovers,
+  # connector endpoints) and silently break: clicks would target whichever
+  # `getElementById` returned first, arrows would attach to the wrong bar,
+  # popover state would smear across the duplicates. Raise loudly at
+  # render-time instead of debugging visual glitches later.
+  defp validate_event_ids!(events) do
+    {_seen, dups} =
+      Enum.reduce(events, {MapSet.new(), MapSet.new()}, fn ev, {seen, dups} ->
+        cond do
+          is_nil(ev.id) -> {seen, dups}
+          MapSet.member?(seen, ev.id) -> {seen, MapSet.put(dups, ev.id)}
+          true -> {MapSet.put(seen, ev.id), dups}
+        end
+      end)
+
+    case MapSet.to_list(dups) do
+      [] ->
+        :ok
+
+      ids ->
+        raise ArgumentError, """
+        LiveGantt.gantt/1: duplicate event ids found in `events`: #{inspect(ids)}.
+
+        Every event must have a unique `id`. Duplicate ids produce duplicate
+        DOM element ids (bar wrappers, popovers, connector endpoints) which
+        break click-targeting, arrow attachment and popover state.
+        """
+    end
+  end
+
   defp partition_events_by_range(events, range) do
     Enum.reduce(events, {[], 0, 0}, fn event, {in_range, earlier, later} ->
       event_start = to_date(event.start)
       event_end = to_date(LiveGantt.Task.effective_end(event))
-      is_milestone = Date.diff(event_end, event_start) <= 0
 
       cond do
-        not out_of_range?(event_start, event_end, is_milestone, range) ->
-          {[event | in_range], earlier, later}
-
-        Date.compare(event_start, range.first) == :lt ->
-          {in_range, earlier + 1, later}
+        # Drop events missing a start date entirely — without it there
+        # is nothing to position the bar against. Silent (no Logger
+        # call) so a malformed task can't spam the host app's logs.
+        is_nil(event_start) or is_nil(event_end) ->
+          {in_range, earlier, later}
 
         true ->
-          {in_range, earlier, later + 1}
+          is_milestone = Date.diff(event_end, event_start) <= 0
+
+          cond do
+            not out_of_range?(event_start, event_end, is_milestone, range) ->
+              {[event | in_range], earlier, later}
+
+            Date.compare(event_start, range.first) == :lt ->
+              {in_range, earlier + 1, later}
+
+            true ->
+              {in_range, earlier, later + 1}
+          end
       end
     end)
     |> then(fn {in_range, e, l} -> {Enum.reverse(in_range), e, l} end)
@@ -3593,10 +3663,13 @@ defmodule LiveGantt do
             {ch, pa}
 
           pid ->
-            if Map.has_key?(by_id, pid) do
-              {Map.update(ch, pid, [ev.id], &[ev.id | &1]), Map.put(pa, ev.id, pid)}
-            else
-              {ch, pa}
+            cond do
+              not Map.has_key?(by_id, pid) -> {ch, pa}
+              # Reject self-reference and any chain that would close a cycle
+              # (parent's existing ancestor chain already contains the child).
+              pid == ev.id -> {ch, pa}
+              cycle?(pid, ev.id, pa) -> {ch, pa}
+              true -> {Map.update(ch, pid, [ev.id], &[ev.id | &1]), Map.put(pa, ev.id, pid)}
             end
         end
       end)
@@ -3605,6 +3678,27 @@ defmodule LiveGantt do
     children = Map.new(children, fn {k, v} -> {k, Enum.reverse(v)} end)
 
     %{by_id: by_id, children: children, parents: parents}
+  end
+
+  # True if walking up `start`'s parent chain reaches `target`. Used at
+  # tree-build time to refuse any new parent_id link that would close a
+  # cycle — without this guard, `ancestor_ids/2`, `effective_id/3`, and
+  # `descendants_of/2` would all recurse forever and hang the render.
+  defp cycle?(start, target, parents) do
+    cycle_walk?(start, target, parents, %{})
+  end
+
+  defp cycle_walk?(id, target, _parents, _seen) when id == target, do: true
+
+  defp cycle_walk?(id, target, parents, seen) do
+    cond do
+      Map.has_key?(seen, id) -> false
+      true ->
+        case Map.get(parents, id) do
+          nil -> false
+          pid -> cycle_walk?(pid, target, parents, Map.put(seen, id, true))
+        end
+    end
   end
 
   # True if the event has at least one child in the same event list.
@@ -3690,10 +3784,17 @@ defmodule LiveGantt do
   # Convert the consumer-provided `expanded` attr (nil, list, or
   # MapSet) into a MapSet for fast membership checks. nil → empty
   # (all sub-projects collapsed by default).
-  defp normalize_expanded(nil), do: MapSet.new()
-  defp normalize_expanded(%MapSet{} = set), do: set
-  defp normalize_expanded(list) when is_list(list), do: MapSet.new(list)
-  defp normalize_expanded(_), do: MapSet.new()
+  # `expanded` accepts:
+  #   * `nil` or `[]` → nothing expanded
+  #   * a `MapSet` or list of event ids → exactly those expanded
+  #   * `:all` → every event in the input is expanded (callers want
+  #     "show everything" without listing ids; expand to a concrete
+  #     set so all downstream `MapSet.member?` checks stay branchless)
+  defp normalize_expanded(nil, _events), do: MapSet.new()
+  defp normalize_expanded(:all, events), do: MapSet.new(events, & &1.id)
+  defp normalize_expanded(%MapSet{} = set, _events), do: set
+  defp normalize_expanded(list, _events) when is_list(list), do: MapSet.new(list)
+  defp normalize_expanded(_, _events), do: MapSet.new()
 
   # For every sub-project event that doesn't carry its own start/end,
   # synthesize them from the min/max of its leaf descendants' dates.
@@ -3755,14 +3856,15 @@ defmodule LiveGantt do
   defp cluster_subprojects(events, tree) do
     by_id = Map.new(events, &{&1.id, &1})
 
-    # Top-level (within the visible set) = no parent_id pointing at
-    # another visible event.
+    # Top-level (within the visible set) = no `tree.parents` entry,
+    # i.e. the tree-builder didn't accept a parent link for this
+    # event. Consulting the tree (rather than re-reading
+    # `parent_id_of/1` directly) means cycle-closing or unresolved
+    # parent_ids that the builder rejected don't accidentally remove
+    # the event from the top-level set here.
     top_level =
       Enum.filter(events, fn ev ->
-        case parent_id_of(ev) do
-          nil -> true
-          pid -> not Map.has_key?(by_id, pid)
-        end
+        not Map.has_key?(tree.parents, ev.id)
       end)
 
     # Indices of children inside `events`, so we can recover the
@@ -4308,6 +4410,7 @@ defmodule LiveGantt do
   defp to_date(%Date{} = d), do: d
   defp to_date(%DateTime{} = dt), do: DateTime.to_date(dt)
   defp to_date(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_date(ndt)
+  defp to_date(_), do: nil
 
   defp max_date(a, b), do: if(Date.compare(a, b) == :lt, do: b, else: a)
   defp min_date(a, b), do: if(Date.compare(a, b) == :gt, do: b, else: a)

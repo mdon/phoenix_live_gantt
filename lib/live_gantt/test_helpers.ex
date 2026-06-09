@@ -31,8 +31,6 @@ defmodule LiveGantt.TestHelpers do
   use Phoenix.Component
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
 
-  alias LiveGantt.Task
-  alias LiveGantt
   alias LiveGantt.Inspector
 
   @doc """

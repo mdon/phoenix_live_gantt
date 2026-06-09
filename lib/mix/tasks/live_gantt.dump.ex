@@ -26,7 +26,6 @@ defmodule Mix.Tasks.LiveGantt.Dump do
 
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
 
-  alias LiveGantt
   alias LiveGantt.Inspector
   alias LiveGantt.TestHelpers
 

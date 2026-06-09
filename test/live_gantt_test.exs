@@ -3235,4 +3235,208 @@ defmodule LiveGanttTest do
       assert html =~ "repeating-linear-gradient"
     end
   end
+
+  describe "input edge cases (regression tests for crash bugs)" do
+    test "cyclic parent_id chain renders without hanging" do
+      events = [
+        %LiveGantt.Task{
+          id: "a",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          title: "A",
+          extra: %{parent_id: "b"}
+        },
+        %LiveGantt.Task{
+          id: "b",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          title: "B",
+          extra: %{parent_id: "c"}
+        },
+        %LiveGantt.Task{
+          id: "c",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          title: "C",
+          extra: %{parent_id: "a"}
+        }
+      ]
+
+      task =
+        Elixir.Task.async(fn ->
+          assigns = %{events: events, range: sample_range()}
+          render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
+        end)
+
+      result = Elixir.Task.yield(task, 2_000) || Elixir.Task.shutdown(task, :brutal_kill)
+      assert {:ok, html} = result, "render hung — cycle detection broken"
+      # Cycle-closing link is dropped, so the chain becomes a proper
+      # hierarchy with one root visible by default. The important thing
+      # is the render finishes — anything in the HTML proves it ran.
+      assert html =~ "lg-wrap"
+    end
+
+    test "self-referential parent_id doesn't hang" do
+      events = [
+        %LiveGantt.Task{
+          id: "loop",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          title: "Loop",
+          extra: %{parent_id: "loop"}
+        }
+      ]
+
+      task =
+        Elixir.Task.async(fn ->
+          assigns = %{events: events, range: sample_range()}
+          render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
+        end)
+
+      result = Elixir.Task.yield(task, 2_000) || Elixir.Task.shutdown(task, :brutal_kill)
+      assert {:ok, html} = result, "render hung on self-referential parent_id"
+      # Self-reference dropped → "loop" renders as a top-level task.
+      assert html =~ ~s(data-event-id="loop")
+    end
+
+    test "event with nil start is silently dropped (no FunctionClauseError)" do
+      events = [
+        %LiveGantt.Task{
+          id: "good",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          title: "Good"
+        },
+        %LiveGantt.Task{id: "bad", start: nil, title: "Bad"}
+      ]
+
+      assigns = %{events: events, range: sample_range()}
+
+      html =
+        render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
+
+      assert html =~ ~s(data-event-id="good")
+      refute html =~ ~s(data-event-id="bad")
+    end
+
+    test "duplicate event ids raise with a clear message" do
+      events = [
+        %LiveGantt.Task{
+          id: "dup",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          title: "First"
+        },
+        %LiveGantt.Task{
+          id: "dup",
+          start: ~D[2026-04-06],
+          end: ~D[2026-04-10],
+          title: "Second"
+        }
+      ]
+
+      assert_raise ArgumentError, ~r/duplicate event ids.*dup/s, fn ->
+        assigns = %{events: events, range: sample_range()}
+        render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
+      end
+    end
+  end
+
+  describe "sub-project rollup ordering" do
+    test "parent with nil dates survives partition when children are in-range" do
+      events = [
+        %LiveGantt.Task{
+          id: "p",
+          start: nil,
+          end: nil,
+          title: "Parent",
+          extra: %{children: true}
+        },
+        %LiveGantt.Task{
+          id: "c1",
+          start: ~D[2026-04-02],
+          end: ~D[2026-04-06],
+          title: "Child 1",
+          extra: %{parent_id: "p"}
+        },
+        %LiveGantt.Task{
+          id: "c2",
+          start: ~D[2026-04-08],
+          end: ~D[2026-04-15],
+          title: "Child 2",
+          extra: %{parent_id: "p"}
+        }
+      ]
+
+      assigns = %{events: events, range: sample_range()}
+
+      html =
+        render(
+          ~H[<.gantt id="lg" events={@events} date_range={@range} expanded={:all} />]
+        )
+
+      # Parent must render — its dates are rolled up from the children
+      # BEFORE partition runs (otherwise nil start drops it).
+      assert html =~ ~s(data-event-id="p")
+      assert html =~ ~s(data-event-id="c1")
+      assert html =~ ~s(data-event-id="c2")
+    end
+  end
+
+  describe "expanded: :all" do
+    test "expands every sub-project in the input" do
+      events = [
+        %LiveGantt.Task{
+          id: "p",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-30],
+          title: "Parent"
+        },
+        %LiveGantt.Task{
+          id: "c",
+          start: ~D[2026-04-02],
+          end: ~D[2026-04-06],
+          title: "Child",
+          extra: %{parent_id: "p"}
+        }
+      ]
+
+      assigns = %{events: events, range: sample_range()}
+
+      html_collapsed =
+        render(~H[<.gantt id="lg" events={@events} date_range={@range} expanded={nil} />])
+
+      html_all =
+        render(~H[<.gantt id="lg" events={@events} date_range={@range} expanded={:all} />])
+
+      # Collapsed → child is hidden under the parent.
+      refute html_collapsed =~ ~s(data-event-id="c")
+      # `:all` → child is visible.
+      assert html_all =~ ~s(data-event-id="c")
+    end
+  end
+
+  describe "multi-instance isolation" do
+    test "SVG marker ids are scoped to the chart id so two gantts don't share defs" do
+      events = sample_events()
+      connectors = [%{from: "t1", to: "t2", type: :fs}]
+      assigns = %{events: events, range: sample_range(), connectors: connectors}
+
+      html_a =
+        render(~H[<.gantt id="alpha" events={@events} date_range={@range} connectors={@connectors} />])
+
+      html_b =
+        render(~H[<.gantt id="beta" events={@events} date_range={@range} connectors={@connectors} />])
+
+      # Marker defs are id-scoped
+      assert html_a =~ ~s(id="lg-arrow-alpha")
+      assert html_b =~ ~s(id="lg-arrow-beta")
+      # Paths reference the scoped markers
+      assert html_a =~ "url(#lg-arrow-alpha)"
+      assert html_b =~ "url(#lg-arrow-beta)"
+      # And do NOT cross-reference each other's markers
+      refute html_a =~ "url(#lg-arrow-beta)"
+      refute html_b =~ "url(#lg-arrow-alpha)"
+    end
+  end
 end

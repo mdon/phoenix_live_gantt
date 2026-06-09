@@ -27,6 +27,12 @@
       this._onScrollToday = () => this._scrollToToday(true);
       this.el.addEventListener("lg:scroll-today", this._onScrollToday);
 
+      // Seed the marker-position cache so `updated()` only re-scrolls
+      // when the today marker actually MOVES (not on every unrelated
+      // server patch).
+      const marker = this.el.querySelector(".lg-today");
+      this._lastMarkerLeft = marker ? marker.style.left || "" : "";
+
       if (this.el.dataset.autoScrollToday === "true") {
         // Wait one frame so layout is settled before we measure.
         requestAnimationFrame(() => this._scrollToToday(false));
@@ -36,12 +42,21 @@
       this.el.removeEventListener("lg:scroll-today", this._onScrollToday);
     },
     updated() {
-      // Re-scroll on LiveView patches that replace the today marker
-      // (e.g. date range navigation moves the marker to a new x).
-      // Only if the marker is present AND auto-scroll is still on.
-      if (this.el.dataset.autoScrollToday === "true") {
-        requestAnimationFrame(() => this._scrollToToday(false));
-      }
+      // Only re-scroll when the today marker actually moved (e.g.
+      // date-range navigation shifts it). Without this check, every
+      // unrelated LiveView patch (popover-open round-trips, expand /
+      // collapse, etc.) would yank the user's scroll position back to
+      // today and feel broken.
+      if (this.el.dataset.autoScrollToday !== "true") return;
+
+      const marker = this.el.querySelector(".lg-today");
+      if (!marker) return;
+
+      const left = marker.style.left || "";
+      if (this._lastMarkerLeft === left) return;
+      this._lastMarkerLeft = left;
+
+      requestAnimationFrame(() => this._scrollToToday(false));
     },
     _scrollToToday(smooth) {
       const marker = this.el.querySelector(".lg-today");
@@ -112,12 +127,64 @@
       // them in one pass.
       window.LiveGanttHooks.LgBarPopover._installGlobal();
       window.LiveGanttHooks.LgBarPopover._bars.add(this.el);
+
+      // If this bar was the active popover BEFORE a LiveView diff
+      // re-rendered it (same DOM id, new mount), restore the open
+      // state from the chart-keyed module-level registry. Without
+      // this, opening a popover then triggering any server-side
+      // patch would silently drop the open state.
+      this._restoreIfActive();
     },
 
     destroyed() {
       this.el.removeEventListener("click", this._onClick);
       window.LiveGanttHooks.LgBarPopover._bars.delete(this.el);
-      this._close();
+      // Do NOT clear `_activeBarByChart` here — the bar might be
+      // re-mounting after a diff and we want `mounted()` to restore.
+    },
+
+    updated() {
+      // LiveView diffs wipe JS-applied classes (`lg-faded`, `lg-pinned`)
+      // and reset element attributes. If this chart currently has an
+      // open popover, replay the fade + pin pass so the visual state
+      // survives the diff.
+      this._restoreIfActive();
+    },
+
+    _restoreIfActive() {
+      const chartEl = this.el.closest(".lg-wrap");
+      if (!chartEl) return;
+      const active =
+        window.LiveGanttHooks.LgBarPopover._activeBarByChart.get(chartEl);
+      if (!active) return;
+
+      // Find the element that owned the open popover (could be a bar
+      // OR a label — both carry the LgBarPopover hook). Use the
+      // popover-target id, not the event id, because bar and label
+      // share the event id but have distinct popover targets.
+      const activeEl = chartEl.querySelector(
+        `[data-popover-target="${CSS.escape(active.popoverId)}"]`,
+      );
+      if (!activeEl) {
+        // The active element vanished (e.g. server removed the event).
+        // Clear the stale registration so future restores no-op.
+        window.LiveGanttHooks.LgBarPopover._activeBarByChart.delete(chartEl);
+        return;
+      }
+
+      const popover = document.getElementById(active.popoverId);
+      if (popover) popover.classList.remove("hidden");
+      activeEl.dataset.popoverOpen = "true";
+
+      window.LiveGanttHooks.LgBarPopover._applyTreeFade(activeEl, active.eventId);
+      if (popover) {
+        requestAnimationFrame(() => {
+          window.LiveGanttHooks.LgBarPopover._pushBottomBadges(
+            activeEl,
+            popover,
+          );
+        });
+      }
     },
 
     _popover() {
@@ -141,7 +208,20 @@
       // Walks the connector graph in BOTH directions from the active task,
       // so ancestors AND descendants stay full color.
       const eventId = this.el.dataset.eventId;
-      if (eventId) {
+      const popoverId = this.el.dataset.popoverTarget;
+      if (eventId && popoverId) {
+        // Register as the chart's active popover so `updated()` can
+        // restore the open state after LiveView diffs. Track the
+        // popover-target id (not just the event id) because bar and
+        // label rows share an event id but expose distinct popovers.
+        const chartEl = this.el.closest(".lg-wrap");
+        if (chartEl) {
+          window.LiveGanttHooks.LgBarPopover._activeBarByChart.set(chartEl, {
+            popoverId,
+            eventId,
+          });
+        }
+
         window.LiveGanttHooks.LgBarPopover._applyTreeFade(this.el, eventId);
       }
 
@@ -160,6 +240,12 @@
       p.classList.add("hidden");
       delete this.el.dataset.popoverOpen;
 
+      // Clear the chart's active bar registration.
+      const chartEl = this.el.closest(".lg-wrap");
+      if (chartEl) {
+        window.LiveGanttHooks.LgBarPopover._activeBarByChart.delete(chartEl);
+      }
+
       // Restore everything else.
       window.LiveGanttHooks.LgBarPopover._clearTreeFade(this.el);
       window.LiveGanttHooks.LgBarPopover._restoreBottomBadges(this.el);
@@ -176,11 +262,21 @@
   window.LiveGanttHooks.LgBarPopover._bars = new Set();
   window.LiveGanttHooks.LgBarPopover._globalInstalled = false;
 
+  // Chart wrap element → active (open) event id. Survives LiveView
+  // diffs so a re-mounted bar hook can restore its popover/fade state.
+  // Cleaned up by `_close` / `_closeAll` and on outside-click close.
+  window.LiveGanttHooks.LgBarPopover._activeBarByChart = new WeakMap();
+
   window.LiveGanttHooks.LgBarPopover._installGlobal = function () {
     if (this._globalInstalled) return;
     this._globalInstalled = true;
 
     document.addEventListener("click", (e) => {
+      // Clicks inside another chart shouldn't close popovers in THIS
+      // chart — each gantt instance manages its own popover state.
+      // Clicks entirely outside any chart close everything.
+      const clickWrap = e.target.closest(".lg-wrap");
+
       this._bars.forEach((bar) => {
         if (bar.dataset.popoverOpen !== "true") return;
 
@@ -191,10 +287,16 @@
         if (bar.contains(e.target)) return;
         if (popover && popover.contains(e.target)) return;
 
+        // Click landed inside a DIFFERENT chart — leave this chart's
+        // popover alone so the two instances don't trample each other.
+        const barWrap = bar.closest(".lg-wrap");
+        if (clickWrap && barWrap && clickWrap !== barWrap) return;
+
         // Click landed elsewhere — close + restore the faded tree
         // and any shifted bottom badges.
         if (popover) popover.classList.add("hidden");
         delete bar.dataset.popoverOpen;
+        if (barWrap) this._activeBarByChart.delete(barWrap);
         this._clearTreeFade(bar);
         this._restoreBottomBadges(bar);
       });
@@ -213,6 +315,8 @@
       const popover = popoverId ? document.getElementById(popoverId) : null;
       if (popover) popover.classList.add("hidden");
       delete bar.dataset.popoverOpen;
+      const wrap = bar.closest(".lg-wrap");
+      if (wrap) this._activeBarByChart.delete(wrap);
       this._clearTreeFade(bar);
       this._restoreBottomBadges(bar);
     });
