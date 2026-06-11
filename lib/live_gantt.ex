@@ -256,12 +256,15 @@ defmodule LiveGantt do
   # overriding with nil or a custom class lets you fully restyle.
 
   # Main column + label header
-  attr :main_header_class, :string,
-    default: "flex sticky top-0 z-20 bg-base-100 border-b-2 border-base-content/15"
+  # NOTE: the bottom border + background live on the label-header and the time
+  # wrapper (below), NOT here — the sticky header is only as wide as the viewport,
+  # so a border on it stops at the scroll edge and vanishes under columns scrolled
+  # into view. The label-header + time wrapper always span the full content width.
+  attr :main_header_class, :string, default: "flex sticky top-0 z-20"
 
   attr :label_header_class, :string,
     default:
-      "flex-shrink-0 border-r border-base-content/10 px-3 py-2 font-semibold text-sm text-base-content"
+      "flex-shrink-0 bg-base-100 border-r border-base-content/10 border-b-2 border-b-base-content/15 px-3 py-2 font-semibold text-sm text-base-content"
 
   attr :column_header_class, :string,
     default: "text-xs text-center py-2 border-r border-base-content/5 font-medium flex-shrink-0"
@@ -463,6 +466,7 @@ defmodule LiveGantt do
   attr :show_navigation, :boolean, default: true
   attr :zooms, :list, default: [:day, :week, :month]
   attr :on_zoom_change, :any, default: nil
+
   attr :on_navigate, :any, default: nil
   attr :on_scroll_today, :any, default: nil
 
@@ -522,7 +526,7 @@ defmodule LiveGantt do
     # `today` attr, else `Date.utc_today()`) so the column highlight
     # agrees with the today-marker line — both must use the same notion
     # of "today" or a consumer-supplied `today` highlights nothing.
-    columns = build_columns(range, assigns.zoom, day_px, today)
+    columns = build_columns(range, column_zoom_for(day_px, total_days), day_px, today)
 
     # --- Sub-project rollup (must run before partition) ---
     # A sub-project parent often has `start: nil, end: nil` and relies
@@ -924,8 +928,13 @@ defmodule LiveGantt do
               {I18n.label(:task, @translations)}
             </div>
 
-            <%!-- Time columns --%>
-            <div class="flex flex-1" style={"min-width: #{@content_width}px"}>
+            <%!-- Time columns. The bottom border + bg sit HERE (not on the
+                 sticky header) so they span the full content width and stay put
+                 under columns scrolled into view. --%>
+            <div
+              class="flex flex-1 bg-base-100 border-b-2 border-base-content/15"
+              style={"min-width: #{@content_width}px"}
+            >
               <div
                 :for={col <- @columns}
                 class={[
@@ -1561,6 +1570,17 @@ defmodule LiveGantt do
     end
   end
 
+  # Sub-hour columns: 15-minute (96/day) and 5-minute (288/day) slots labelled
+  # with clock times (7:00, 7:15, …) instead of the meaningless hour ordinal.
+  # The day's date sits on the 00:00 slot. `:min5` labels only every third slot
+  # (the 15-minute boundaries) so the 5-minute gridlines don't crowd into an
+  # unreadable wall of text.
+  defp build_columns(range, :min15, day_px, today),
+    do: sub_hour_columns(range, day_px, today, 15, 1)
+
+  defp build_columns(range, :min5, day_px, today),
+    do: sub_hour_columns(range, day_px, today, 5, 3)
+
   defp build_columns(range, :day, day_px, today) do
     today_date = to_date(today)
 
@@ -1615,6 +1635,34 @@ defmodule LiveGantt do
   defp build_columns(range, _zoom, day_px, today),
     do: build_columns(range, :week, day_px, today)
 
+  defp sub_hour_columns(range, day_px, today, minutes_per_slot, label_every) do
+    slots_per_day = div(1440, minutes_per_slot)
+    col_px = round(day_px / slots_per_day)
+    now = if match?(%DateTime{}, today) or match?(%NaiveDateTime{}, today), do: today, else: nil
+
+    for date <- range, slot <- 0..(slots_per_day - 1) do
+      minute_of_day = slot * minutes_per_slot
+      h = div(minute_of_day, 60)
+      m = rem(minute_of_day, 60)
+
+      label =
+        cond do
+          slot == 0 -> "#{I18n.month_name_short(date.month)} #{date.day}"
+          rem(slot, label_every) == 0 -> "#{h}:#{pad2(m)}"
+          true -> ""
+        end
+
+      %{
+        label: label,
+        width_px: col_px,
+        is_today: slot_is_now?(date, minute_of_day, minutes_per_slot, now),
+        non_working: Date.day_of_week(date) in [6, 7]
+      }
+    end
+  end
+
+  defp pad2(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
+
   @doc """
   The default pixels-per-day for a zoom level — `:hour` 720, `:day` 40,
   `:week` 24, `:month` 8. Use it as the floor when computing a fit-to-width
@@ -1625,12 +1673,55 @@ defmodule LiveGantt do
   def default_day_width_px(zoom), do: day_width_px(zoom)
 
   # `:hour` zoom makes a day 720px wide (24 × 30px/hour) so intra-day bars and
-  # per-hour columns are legible. The wide content scrolls.
+  # per-hour columns are legible. The wide content scrolls. `:min15` is sized so
+  # a 15-min column is ~45px — enough for a `0:45`-style label to breathe rather
+  # than four crammed clock times per hour.
+  defp day_width_px(:min5), do: 8640
+  defp day_width_px(:min15), do: 4320
   defp day_width_px(:hour), do: 720
   defp day_width_px(:day), do: 40
   defp day_width_px(:week), do: 24
   defp day_width_px(:month), do: 8
   defp day_width_px(_), do: 24
+
+  # Choose the COLUMN granularity for a given continuous density (px/day),
+  # independent of any named zoom. This is what makes continuous zoom work: the
+  # density can sit anywhere between the named presets, and the header columns
+  # snap to whatever granularity reads well at that density (the preset px values
+  # double as the thresholds, so each granularity's columns stay legibly wide).
+  # Capped so a wide range at a fine density doesn't emit tens of thousands of
+  # column divs — it steps to a coarser granularity instead (the bars keep their
+  # true density; only the gridlines coarsen).
+  @column_budget 800
+
+  defp column_zoom_for(day_px, total_days) do
+    by_density =
+      cond do
+        day_px >= 8640 -> :min5
+        day_px >= 4320 -> :min15
+        day_px >= 720 -> :hour
+        day_px >= 40 -> :day
+        day_px >= 16 -> :week
+        true -> :month
+      end
+
+    cap_columns(by_density, total_days)
+  end
+
+  @column_order [:min5, :min15, :hour, :day, :week, :month]
+
+  defp cap_columns(gran, total_days) do
+    @column_order
+    |> Enum.drop_while(&(&1 != gran))
+    |> Enum.find(:month, fn g -> column_count(g, total_days) <= @column_budget end)
+  end
+
+  defp column_count(:min5, days), do: days * 288
+  defp column_count(:min15, days), do: days * 96
+  defp column_count(:hour, days), do: days * 24
+  defp column_count(:day, days), do: days
+  defp column_count(:week, days), do: ceil(days / 7)
+  defp column_count(:month, days), do: ceil(days / 30)
 
   defp week_label(first_day, days_count) do
     if days_count >= 5 do
@@ -4788,6 +4879,8 @@ defmodule LiveGantt do
   defp today_button_functional?(_on_scroll_today, id, enable_hooks),
     do: is_binary(id) and enable_hooks == true
 
+  defp zoom_label(:min5, _t), do: "5m"
+  defp zoom_label(:min15, _t), do: "15m"
   defp zoom_label(:hour, t), do: I18n.label(:hour, t)
   defp zoom_label(:day, t), do: I18n.label(:day, t)
   defp zoom_label(:week, t), do: I18n.label(:week, t)
@@ -4815,6 +4908,15 @@ defmodule LiveGantt do
 
   defp hour_is_now?(date, hour, now),
     do: date == to_date(now) and hour == now.hour
+
+  defp slot_is_now?(_date, _minute_of_day, _minutes_per_slot, nil), do: false
+
+  defp slot_is_now?(date, minute_of_day, minutes_per_slot, now) do
+    now_minute = now.hour * 60 + now.minute
+
+    date == to_date(now) and now_minute >= minute_of_day and
+      now_minute < minute_of_day + minutes_per_slot
+  end
 
   defp parse_row_height(height) when is_binary(height) do
     case Float.parse(height) do
