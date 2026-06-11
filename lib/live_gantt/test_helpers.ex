@@ -32,6 +32,7 @@ defmodule LiveGantt.TestHelpers do
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
 
   alias LiveGantt.Inspector
+  alias LiveGantt.PathFormat
 
   @doc """
   Render the Waterfall component with the given events and options.
@@ -546,7 +547,14 @@ defmodule LiveGantt.TestHelpers do
            Map.get(overrides, :assert_arrow_tips_clear_target_bars, [])
          )
        end},
-      {:detour_invariants, fn -> assert_detour_invariants_hold(html) end}
+      {:detour_invariants, fn -> assert_detour_invariants_hold(html) end},
+      {:arrowheads_at_path_ends,
+       fn ->
+         assert_arrowheads_at_path_ends(
+           html,
+           Map.get(overrides, :assert_arrowheads_at_path_ends, [])
+         )
+       end}
     ]
     |> Enum.flat_map(fn {name, fun} ->
       try do
@@ -641,14 +649,22 @@ defmodule LiveGantt.TestHelpers do
   end
 
   @doc """
-  Assert that every connector's arrow tip clears the target bar by at
-  least `:min_gap_px` (default 1). For non-FS types or when the target
-  is on a different x-side, this is best-effort: only FS arrows
-  (target_entry=:west) are checked since their geometry is most
+  Assert that no connector's arrow tip pierces meaningfully INTO the target bar.
+
+  Arrow tips intentionally land ON the target bar's edge (gap 0) so they read as
+  connected at any responsive fill factor — visual separation is the fixed-px
+  arrowhead overlay's job, not a natural-px gap that would stretch. So this
+  guards against tips landing INSIDE the bar (a refX/offset bug): a tip is a
+  violation when it sits more than `:tol_px` (default 2, absorbing the
+  percent↔pixel round-trip) to the bar-interior side of the near edge. Only FS
+  arrows (`target_entry=:west`) are checked, since their geometry is the most
   predictable.
   """
   def assert_arrow_tips_clear_target_bars(html, opts \\ []) do
-    min_gap = Keyword.get(opts, :min_gap_px, 1)
+    # `min_gap_px` is the minimum allowed `bar.left - tip`. Default `-tol`: a tip
+    # may sit up to `tol` px inside the edge (rounding) but no further.
+    tol = Keyword.get(opts, :tol_px, 2)
+    min_gap = Keyword.get(opts, :min_gap_px, -tol)
     geom = Inspector.inspect_html(html)
 
     violations =
@@ -678,6 +694,49 @@ defmodule LiveGantt.TestHelpers do
         assert_arrow_tips_clear_target_bars: #{length(violations)} arrow tip(s)
         too close to / inside the target bar (min_gap=#{min_gap}):
         #{Enum.map_join(violations, "\n", fn {f, t, tip, edge, g} -> "  #{f} → #{t}: tip=#{tip}, target.left=#{edge}, gap=#{g}" end)}
+        """
+    end
+  end
+
+  @doc """
+  Assert that every arrowhead sits on its connector's shaft END — the head is
+  drawn in a separate, non-stretched overlay layer (so it stays a crisp px
+  triangle while the shaft SVG stretches with the responsive fill), and it must
+  track the shaft's TRUE terminal point even after path rewrites
+  (`consolidate_piercing_trunks` can re-route a forward path so it ends at a
+  different y). `:tol_px` (default 2) absorbs the percent↔pixel round-trip.
+  """
+  def assert_arrowheads_at_path_ends(html, opts \\ []) do
+    tol = Keyword.get(opts, :tol_px, 2)
+    geom = Inspector.inspect_html(html)
+    by_key = Map.new(geom.arrowheads, fn h -> {{h.from, h.to}, h} end)
+
+    violations =
+      Enum.flat_map(geom.connectors, fn c ->
+        with %{} = head <- Map.get(by_key, {c.from, c.to}),
+             %{x: ex, y: ey} <- PathFormat.terminal(c.raw_path) do
+          dx = abs(head.tip_x - ex)
+          dy = abs(head.tip_y - ey)
+
+          if dx > tol or dy > tol do
+            [{c.from, c.to, {head.tip_x, head.tip_y}, {ex, ey}, {dx, dy}}]
+          else
+            []
+          end
+        else
+          _ -> []
+        end
+      end)
+
+    case violations do
+      [] ->
+        :ok
+
+      _ ->
+        raise """
+        assert_arrowheads_at_path_ends: #{length(violations)} arrowhead(s) off
+        the shaft end (tol=#{tol}px):
+        #{Enum.map_join(violations, "\n", fn {f, t, head, term, {dx, dy}} -> "  #{f} → #{t}: head=#{inspect(head)}, shaft_end=#{inspect(term)}, Δ=(#{dx},#{dy})" end)}
         """
     end
   end

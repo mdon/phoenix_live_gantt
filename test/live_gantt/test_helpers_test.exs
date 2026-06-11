@@ -199,7 +199,9 @@ defmodule LiveGantt.TestHelpersTest do
 
       html = TestHelpers.render_waterfall(events, connectors: [%{from: "a", to: "b"}])
 
-      assert :ok = TestHelpers.assert_arrow_tips_clear_target_bars(html, min_gap_px: 1)
+      # Tip lands ON b's left edge (gap ~0) by design; the assertion flags only
+      # tips piercing INTO the bar.
+      assert :ok = TestHelpers.assert_arrow_tips_clear_target_bars(html)
     end
   end
 

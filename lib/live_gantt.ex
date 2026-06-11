@@ -128,12 +128,12 @@ defmodule LiveGantt do
   attr :day_width_px, :integer,
     default: nil,
     doc:
-      "Override the per-zoom pixels-per-day. Use with fit-to-width: pass `LiveGantt.default_day_width_px(zoom)` floored against a viewport-derived value so a short chart fills the container instead of leaving empty space. `nil` uses the zoom default."
+      "Override the per-zoom pixels-per-day, i.e. the NATURAL content width (`total_days * day_width_px`). This is the scroll `min-width`; the chart is responsive and fills wider containers on its own (horizontal coords are percentages), so use this only to tune density / the scroll threshold. `nil` uses the zoom default."
 
-  attr :fit_width, :boolean,
-    default: false,
+  attr :min_bar_px, :integer,
+    default: 0,
     doc:
-      "When true (and `enable_hooks` + `id` are set), the container reports its available width to the server via a `\"lg-fit-width\"` event (`%{\"available_px\" => n}`) on mount + resize, so you can recompute `day_width_px` to fill the viewport. The library doesn't resize itself — you own the recompute (see `default_day_width_px/1`)."
+      "Minimum rendered width (px) for a non-milestone bar. Default `0` — bars reflect their TRUE duration, so a task too short to show at the current zoom is a hairline (or vanishes) until you zoom in. Set e.g. `4` to floor every bar to a visible/clickable sliver at the cost of overstating very short tasks' spans (connectors still attach to the rendered edge). A zero-DURATION task is always a milestone diamond regardless of this value."
 
   attr :today, :any,
     default: nil,
@@ -166,6 +166,11 @@ defmodule LiveGantt do
   attr :show_progress, :boolean, default: true
   attr :show_today, :boolean, default: true
   attr :show_connectors, :boolean, default: true
+
+  attr :tiny_bar_px, :integer,
+    default: 5,
+    doc:
+      "When a bar renders narrower than this many SCREEN pixels, a small fixed-size down-triangle marker appears at the task's start to signal a too-small-to-see task. The decision is pure CSS — a container query against the bar's rendered width — so it's server-emitted, correct against the responsive fill + zoom, instant on first paint, and re-resolves on resize with no JavaScript. (Clicking the marker opens the same popover, which does need `enable_hooks`.) Set `0` to disable. Bars themselves stay at their true width — see `min_bar_px`. Assumes a uniform value across charts sharing a page."
 
   attr :avoid_collisions, :boolean,
     default: true,
@@ -511,6 +516,7 @@ defmodule LiveGantt do
     day_px = assigns.day_width_px || day_width_px(assigns.zoom)
     content_width = total_days * day_px
     row_px = parse_row_height(assigns.row_height)
+    min_bar_px = assigns.min_bar_px
 
     # Build column headers. Thread the resolved `today` (the explicit
     # `today` attr, else `Date.utc_today()`) so the column highlight
@@ -574,7 +580,8 @@ defmodule LiveGantt do
         row_positions,
         row_px,
         range,
-        day_px
+        day_px,
+        min_bar_px
       )
 
     # Index events by id for connector lookups
@@ -612,7 +619,14 @@ defmodule LiveGantt do
     # deps from the same source + direction) so they don't draw on top
     # of each other.
     backward_lanes =
-      assign_backward_lanes(normalized_connectors, events_by_id, row_positions, range, day_px)
+      assign_backward_lanes(
+        normalized_connectors,
+        events_by_id,
+        row_positions,
+        range,
+        day_px,
+        min_bar_px
+      )
 
     # Lane assignment for FORWARD bus stagger. Per-{event_id, side, direction}
     # bus, sorts members by other-end row position and assigns lane indices
@@ -625,7 +639,8 @@ defmodule LiveGantt do
     # `avoid_collisions` is disabled so large Gantts pay zero cost.
     bar_obstacles =
       if assigns.avoid_collisions,
-        do: compute_bar_obstacles(sorted_events, row_positions, range, day_px, row_px),
+        do:
+          compute_bar_obstacles(sorted_events, row_positions, range, day_px, row_px, min_bar_px),
         else: []
 
     # Bundle styling defaults so resolve_style/3 can pick the category
@@ -655,11 +670,11 @@ defmodule LiveGantt do
     # Bundle the ambient routing context so the per-connector builders
     # don't have to thread 8+ positional args each.
     connector_ctx = %{
-      chart_id: assigns.id,
       events_by_id: events_by_id,
       row_positions: row_positions,
       range: range,
       day_px: day_px,
+      min_bar_px: min_bar_px,
       row_px: row_px,
       content_width: content_width,
       outgoing_count: outgoing_count,
@@ -692,6 +707,7 @@ defmodule LiveGantt do
       |> assign(:today, today)
       |> assign(:total_days, total_days)
       |> assign(:day_px, day_px)
+      |> assign(:min_bar_px, min_bar_px)
       |> assign(:content_width, content_width)
       |> assign(:content_height, total_content_height)
       |> assign(:row_px, row_px)
@@ -743,6 +759,23 @@ defmodule LiveGantt do
           transition: transform 150ms ease;
         }
       </style>
+
+      <%!-- "Too small to see" markers, decided in PURE CSS via a container
+         query — no JavaScript measurement. Each marker sits inside a per-task
+         container whose width tracks the bar's RENDERED width (same `%`, so it
+         stretches with the responsive fill). The browser reveals the marker
+         whenever that rendered width is at/under `tiny_bar_px`, and
+         re-evaluates on resize automatically — so the decision is server-emitted
+         + browser-resolved against true screen pixels, instant on first paint,
+         no socket/hook needed. The threshold is `tiny_bar_px` (an integer attr,
+         so safe to interpolate); injected raw because HEEx treats `<style>`
+         bodies as opaque text (CSS braces aren't interpolation). Assumes a
+         uniform `tiny_bar_px` across charts sharing a page. --%>
+      <%= if @tiny_bar_px > 0 do %>
+        {Phoenix.HTML.raw(
+          "<style>.lg-tiny-marker{display:none}@container (max-width:#{@tiny_bar_px}px){.lg-tiny-marker{display:block}}</style>"
+        )}
+      <% end %>
 
       <%!-- Optional built-in toolbar (zoom switcher, today, prev/next).
            Sits above the scroll container so it doesn't scroll horizontally.
@@ -874,9 +907,13 @@ defmodule LiveGantt do
         class={["lg-chart overflow-x-auto bg-base-100", @class]}
         phx-hook={if @enable_hooks, do: "LgAutoScroll"}
         data-auto-scroll-today={to_string(@auto_scroll_today)}
-        data-fit-width={to_string(@fit_width)}
       >
-        <div class="inline-flex flex-col relative">
+        <%!-- `min-w-full` makes the chart at least the viewport width (so a
+             short timeline fills it) while still growing past it (and
+             scrolling) when the natural content is wider. The timeline parts
+             below `flex-1` + `min-width: content_width` to realize the
+             fill-vs-scroll, all in CSS — no measurement, no round-trip. --%>
+        <div class="flex flex-col relative min-w-full">
           <%!-- Column headers --%>
           <div class={["lg-header", @main_header_class]}>
             <%!-- Label column header --%>
@@ -888,7 +925,7 @@ defmodule LiveGantt do
             </div>
 
             <%!-- Time columns --%>
-            <div class="flex" style={"width: #{@content_width}px"}>
+            <div class="flex flex-1" style={"min-width: #{@content_width}px"}>
               <div
                 :for={col <- @columns}
                 class={[
@@ -896,7 +933,7 @@ defmodule LiveGantt do
                   @column_header_class,
                   col.is_today && @column_header_today_class
                 ]}
-                style={"width: #{col.width_px}px"}
+                style={"width: #{pct(col.width_px, @content_width)}%"}
               >
                 {col.label}
               </div>
@@ -1036,10 +1073,13 @@ defmodule LiveGantt do
               <% end %>
             </div>
 
-            <%!-- Bar/timeline column (right) — everything here uses pixel coords against @content_width --%>
+            <%!-- Bar/timeline column (right). Horizontal coords render as %
+                 of this column's width; the px geometry is converted via
+                 `pct/2`. `flex-1` + `min-width: content_width` lets it fill the
+                 viewport (short chart) or grow + scroll (long chart). --%>
             <div
-              class="relative flex-shrink-0"
-              style={"width: #{@content_width}px; height: #{@content_height}px"}
+              class="relative flex-1"
+              style={"min-width: #{@content_width}px; height: #{@content_height}px"}
             >
               <%!-- Grid background: column dividers + non-working day shading --%>
               <div class="absolute inset-0 flex pointer-events-none">
@@ -1049,7 +1089,7 @@ defmodule LiveGantt do
                     @column_divider_class,
                     col.non_working && @non_working_class
                   ]}
-                  style={"width: #{col.width_px}px"}
+                  style={"width: #{pct(col.width_px, @content_width)}%"}
                 >
                 </div>
               </div>
@@ -1058,7 +1098,7 @@ defmodule LiveGantt do
               <div
                 :if={@show_today && today_in_range?(@today, @date_range)}
                 class={["lg-today", @today_marker_line_class]}
-                style={"left: #{today_left_px(@today, @date_range, @day_px)}px; height: #{@content_height}px"}
+                style={"left: #{pct(today_left_px(@today, @date_range, @day_px), @content_width)}%; height: #{@content_height}px"}
               >
                 <div class={@today_marker_badge_class}>
                   {I18n.label(:today, @translations)}
@@ -1074,7 +1114,7 @@ defmodule LiveGantt do
               <div
                 :for={frame <- @subproject_frames}
                 class="lg-subproject-frame absolute pointer-events-none rounded"
-                style={"left: #{frame.left_px}px; top: #{frame.top_y}px; width: #{frame.right_px - frame.left_px}px; height: #{frame.bottom_y - frame.top_y}px; background-color: #{frame_color_for(@subproject_frame_color, frame.parent_depth)}; z-index: #{1 + frame.parent_depth}"}
+                style={"left: #{pct(frame.left_px, @content_width)}%; top: #{frame.top_y}px; width: #{pct(frame.right_px - frame.left_px, @content_width)}%; height: #{frame.bottom_y - frame.top_y}px; background-color: #{frame_color_for(@subproject_frame_color, frame.parent_depth)}; z-index: #{1 + frame.parent_depth}"}
               >
               </div>
 
@@ -1091,7 +1131,7 @@ defmodule LiveGantt do
 
                 <%!-- Bar row --%>
                 <div class={@row_class} style={"height: #{@row_px}px"}>
-                  <% bar = bar_geometry(event, @date_range, @day_px) %>
+                  <% bar = bar_geometry(event, @date_range, @day_px, @min_bar_px) %>
                   <% actions =
                     popover_actions(event, @event_tree, @expanded_set, @on_toggle_expand) %>
                   <% bar_id = bar_dom_id(@id, event.id) %>
@@ -1106,7 +1146,7 @@ defmodule LiveGantt do
                         event.status == :cancelled && @milestone_status_cancelled_class,
                         event.class
                       ]}
-                      style={"left: #{bar.left_px}px; transform: translate(-50%, -50%) rotate(45deg)"}
+                      style={"left: #{pct(bar.left_px, @content_width)}%; transform: translate(-50%, -50%) rotate(45deg)"}
                       phx-click={@on_event_click}
                       phx-value-event-id={event.id}
                       data-event-id={event.id}
@@ -1124,7 +1164,7 @@ defmodule LiveGantt do
                         sub_project?(event, @event_tree) && @bar_subproject_class,
                         event.class
                       ]}
-                      style={"left: #{bar.left_px}px; width: #{bar.width_px}px"}
+                      style={"left: #{pct(bar.left_px, @content_width)}%; width: #{pct(bar.width_px, @content_width)}%"}
                       phx-click={@on_event_click}
                       phx-value-event-id={event.id}
                       phx-hook="LgBarPopover"
@@ -1176,6 +1216,39 @@ defmodule LiveGantt do
                       <% end %>
                     </div>
 
+                    <%!-- Too-small-to-see marker. A bar whose TRUE width is
+                       sub-pixel at the current zoom/fill renders as a hairline
+                       (or vanishes). This fixed-size down-triangle, anchored at
+                       the task's start, signals "a task lives here".
+
+                       The container's width tracks the bar's RENDERED width (same
+                       `%`), and `container-type: inline-size` makes it a CSS
+                       container-query target — the stylesheet above reveals the
+                       inner marker purely when that rendered width is at/under
+                       `tiny_bar_px` screen px. No JS measures anything: the server
+                       emits the rule, the browser resolves it (and re-resolves on
+                       resize). The marker keeps the bar's popover wiring so it's
+                       clickable even when the bar is ~0px. --%>
+                    <div
+                      :if={@tiny_bar_px > 0}
+                      class="lg-tiny-container absolute pointer-events-none"
+                      style={"left: #{pct(bar.left_px, @content_width)}%; top: 0; width: #{pct(bar.width_px, @content_width)}%; height: 0; container-type: inline-size"}
+                    >
+                      <div
+                        id={"#{bar_id}-tiny"}
+                        class={[
+                          "lg-tiny-marker absolute z-30 cursor-pointer pointer-events-auto",
+                          event.color || @bar_default_color_class
+                        ]}
+                        style="left: 0; top: 2px; width: 10px; height: 7px; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 50% 100%)"
+                        phx-hook="LgBarPopover"
+                        data-popover-target={popover_id}
+                        data-event-id={event.id}
+                        title={event.title}
+                      >
+                      </div>
+                    </div>
+
                     <%!-- Bar badges — siblings of the bar (so the bar's
                        overflow-hidden doesn't clip them). Each one
                        positions itself in a corner of the bar's
@@ -1188,6 +1261,7 @@ defmodule LiveGantt do
                       corner_index={corner_index}
                       bar={bar}
                       row_px={@row_px}
+                      content_width={@content_width}
                       event_id={event.id}
                       class={@badge_class}
                       default_color={@badge_default_color_class}
@@ -1208,7 +1282,7 @@ defmodule LiveGantt do
                     <div
                       id={popover_id}
                       class={["lg-bar-popover", @bar_popover_class]}
-                      style={popover_style(bar, @row_px)}
+                      style={popover_style(bar, @row_px, @content_width)}
                       data-popover-for={bar_id}
                       phx-update="ignore"
                       role="dialog"
@@ -1270,56 +1344,23 @@ defmodule LiveGantt do
                 </div>
               <% end %>
 
-              <%!-- SVG connector overlay — exact pixel dimensions, orthogonal routing --%>
+              <%!-- SVG connector SHAFTS. The viewBox stays in PIXELS (the
+                   routing math is unchanged) but the element renders at
+                   `width: 100%` with `preserveAspectRatio="none"`, so the
+                   px paths stretch horizontally in lockstep with the
+                   %-positioned bars (both reduce to frac/total × renderedWidth)
+                   and stay aligned at any width. `non-scaling-stroke` keeps line
+                   thickness crisp. A stretched LINE is still a correct line, so
+                   shafts can stretch — arrowHEADS can't (a stretched triangle is
+                   not a triangle), so they render separately below. --%>
               <svg
                 :if={@connector_paths != []}
                 class="lg-connectors absolute top-0 left-0 pointer-events-none z-20 overflow-visible"
-                width={@content_width}
+                width="100%"
                 height={@content_height}
                 viewBox={"0 0 #{@content_width} #{@content_height}"}
+                preserveAspectRatio="none"
               >
-                <defs>
-                  <%!-- All markers use fill="currentColor" so they inherit the
-                     path's CSS `color` property. That lets a single color
-                     class (e.g. `text-success` on the path) recolor BOTH the
-                     line and its arrowhead consistently. --%>
-                  <marker
-                    id={"lg-arrow-#{@id}"}
-                    viewBox="0 0 10 10"
-                    refX="6"
-                    refY="5"
-                    markerWidth="6"
-                    markerHeight="6"
-                    orient="auto"
-                    markerUnits="userSpaceOnUse"
-                  >
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
-                  </marker>
-                  <marker
-                    id={"lg-arrow-invalid-#{@id}"}
-                    viewBox="0 0 10 10"
-                    refX="6"
-                    refY="5"
-                    markerWidth="6"
-                    markerHeight="6"
-                    orient="auto"
-                    markerUnits="userSpaceOnUse"
-                  >
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
-                  </marker>
-                  <marker
-                    id={"lg-arrow-critical-#{@id}"}
-                    viewBox="0 0 10 10"
-                    refX="6"
-                    refY="5"
-                    markerWidth="7"
-                    markerHeight="7"
-                    orient="auto"
-                    markerUnits="userSpaceOnUse"
-                  >
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
-                  </marker>
-                </defs>
                 <path
                   :for={p <- @connector_paths}
                   d={p.d}
@@ -1327,8 +1368,8 @@ defmodule LiveGantt do
                   stroke-width={p.stroke_width}
                   stroke-dasharray={p.dasharray}
                   opacity={p.opacity}
+                  vector-effect="non-scaling-stroke"
                   class={["lg-connector stroke-current", p.color_class]}
-                  marker-end={p.marker_ref}
                   data-from-id={p.from_id}
                   data-to-id={p.to_id}
                   data-type={p.type}
@@ -1378,6 +1419,36 @@ defmodule LiveGantt do
                   {p.label}
                 </text>
               </svg>
+              <%!-- Arrowhead overlay — a px-faithful layer OUTSIDE the stretched
+                   shaft SVG. Each head is anchored by % (so its tip tracks the
+                   bar-aligned path end as the chart fills/scrolls) but drawn at a
+                   FIXED px size (so it stays a crisp triangle at any fill factor).
+                   `color_class` is mirrored from the shaft so head + line recolor
+                   together. The inner svg is nudged so its triangle TIP lands
+                   exactly on the anchor point. --%>
+              <div
+                :if={@connector_paths != []}
+                class="lg-arrowheads absolute top-0 left-0 w-full pointer-events-none z-20"
+                style={"height: #{@content_height}px"}
+              >
+                <div
+                  :for={p <- @connector_paths}
+                  class={["lg-arrowhead absolute", p.arrow.variant_class, p.color_class]}
+                  style={"left: #{pct(p.arrow.tip_x, @content_width)}%; top: #{p.arrow.tip_y}px"}
+                  data-from-id={p.from_id}
+                  data-to-id={p.to_id}
+                >
+                  <svg
+                    class="absolute block overflow-visible"
+                    width={p.arrow.size}
+                    height={p.arrow.size}
+                    viewBox={"0 0 #{p.arrow.size} #{p.arrow.size}"}
+                    style={"left: #{p.arrow.off_x}px; top: #{p.arrow.off_y}px"}
+                  >
+                    <path d={p.arrow.d} class="fill-current" />
+                  </svg>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1624,7 +1695,17 @@ defmodule LiveGantt do
 
   defp x_px(temporal, range_first, day_px), do: round(frac_days(temporal, range_first) * day_px)
 
-  defp bar_geometry(event, range, day_px) do
+  # Horizontal coordinates render as PERCENTAGES of the content width, not
+  # pixels — so the timeline is responsive: it fills the container when the
+  # natural content (`total_days * day_px`, kept as the scroll `min-width`) is
+  # narrower, and scrolls when wider, with zero JS. Since `px = frac * day_px`
+  # and `content_width = total_days * day_px`, `px / content_width` is exactly
+  # `frac / total_days` — so every existing px coordinate converts by a single
+  # divide, leaving all the geometry/routing math untouched.
+  defp pct(_px, content_width) when content_width in [0, nil], do: 0.0
+  defp pct(px, content_width), do: Float.round(px / content_width * 100, 4)
+
+  defp bar_geometry(event, range, day_px, min_bar_px) do
     total_days = Date.diff(range.last, range.first) + 1
     fs = frac_days(event.start, range.first)
     fe = frac_days(LiveGantt.Task.effective_end(event), range.first)
@@ -1641,8 +1722,11 @@ defmodule LiveGantt do
         vis_start = max(fs, 0.0)
         vis_end = min(fe, total_days * 1.0)
         left_px = max(round(vis_start * day_px), 0)
-        # Width — at least 4px so a sliver of a bar stays visible.
-        width_px = max(round((vis_end - vis_start) * day_px), 4)
+        # Width reflects the TRUE duration; `min_bar_px` (default 0) is an
+        # optional floor so a sub-pixel task can stay a visible sliver. With the
+        # default the bar is honest — a too-short-to-see task is a hairline until
+        # zoomed in — and connectors attach to this same (un-inflated) edge.
+        width_px = max(round((vis_end - vis_start) * day_px), min_bar_px)
         %{left_px: left_px, width_px: width_px, milestone: false, out_of_range: false}
     end
   end
@@ -1735,6 +1819,27 @@ defmodule LiveGantt do
       end
     end)
     |> consolidate_piercing_trunks(ctx)
+    |> Enum.map(&finalize_arrowhead/1)
+  end
+
+  # Compute each connector's arrowhead AFTER all path rewrites
+  # (`consolidate_piercing_trunks` can replace a forward path's `d` with a
+  # multi-hop jog that ENDS AT A DIFFERENT POINT than the original). The head
+  # must sit on the shaft's ACTUAL end — the old `marker-end` rode the path so
+  # this was automatic; the separate overlay layer must re-derive it from the
+  # final `d`. We read the last point + final-segment direction generically, so
+  # it's correct for the 3-seg forward, 5-seg detour, and N-seg jog alike.
+  defp finalize_arrowhead(p) do
+    {tip_x, tip_y, dir} = arrowhead_from_d(p.d)
+
+    variant =
+      cond do
+        p.invalid -> :invalid
+        p.critical -> :critical
+        true -> :normal
+      end
+
+    %{p | arrow: arrowhead_geometry(tip_x, tip_y, dir, variant)}
   end
 
   # Post-pass: for every FORWARD path whose trunk pierces an unrelated
@@ -2175,11 +2280,19 @@ defmodule LiveGantt do
   defp build_path(conn, geom, ctx) do
     %{
       x1: x1,
-      x2: x2,
       arrow_stop: arrow_stop,
       source_exit: source_exit,
-      target_entry: target_entry
-    } = endpoints_for(conn.type, geom.from_event, geom.to_event, ctx.range, ctx.day_px)
+      target_entry: target_entry,
+      backward: backward?
+    } =
+      endpoints_for(
+        conn.type,
+        geom.from_event,
+        geom.to_event,
+        ctx.range,
+        ctx.day_px,
+        ctx.min_bar_px
+      )
 
     # Per-end attachment y. Three cases:
     # 1. Stagger active AND multiple arrows on this bus → distribute
@@ -2194,7 +2307,6 @@ defmodule LiveGantt do
     y1 = compute_attach_y(:source, geom, source_exit, src_class, ctx)
     y2 = compute_attach_y(:target, geom, target_entry, tgt_class, ctx)
 
-    backward? = conflict?(x1, x2)
     label_w = estimate_label_width(conn.label)
     style = resolve_style(conn, backward?, ctx.style_defaults)
 
@@ -2241,9 +2353,63 @@ defmodule LiveGantt do
       stroke_width: style.stroke_width,
       opacity: style.opacity,
       dasharray: style.dasharray,
-      marker_ref: resolve_marker(backward?, conn.critical, ctx.chart_id)
+      # Placeholder — recomputed from the FINAL `d` by `finalize_arrowhead/1`
+      # after path rewrites. Present here so the map has the key to update.
+      arrow: nil
     }
   end
+
+  # The arrowhead is drawn in a SEPARATE, non-stretched overlay layer (see the
+  # render) — positioned by % (so its tip tracks the bar-aligned path end as the
+  # chart fills/scrolls) but sized in fixed px (so it stays a crisp triangle
+  # instead of stretching with the horizontal fill factor). A stretched line is
+  # still a correct line, so the SHAFT can live in the %-stretched SVG; a
+  # stretched triangle is not an arrowhead, so the HEAD can't.
+  #
+  # Reduce a (post-rewrite) M/H/V path `d` to its arrowhead anchor: the last
+  # point and the direction of the final segment. Every shape family — the
+  # 3-seg forward, 5-seg detour, and the consolidator's N-seg jog — ends in a
+  # horizontal "H stop", so the head points east (→) or west (←); anything else
+  # collapses to east. Reading the actual final `d` (rather than the pre-rewrite
+  # endpoints) keeps the head on the shaft's true end even when
+  # `consolidate_piercing_trunks` re-routes it.
+  defp arrowhead_from_d(d) do
+    %{x: tip_x, y: tip_y, dir: dir} = PathFormat.terminal(d)
+    {tip_x, tip_y, if(dir == :west, do: :west, else: :east)}
+  end
+
+  # Precompute everything the overlay needs: the tip anchor (tip_x in px →
+  # rendered as % of content width; tip_y in px, vertically un-stretched), the
+  # fixed px triangle `d`, and the px nudge that lands the triangle's tip on the
+  # anchor. Critical arrows are a touch larger, matching the old marker sizing.
+  defp arrowhead_geometry(tip_x, tip_y, dir, variant) do
+    size = if variant == :critical, do: 10, else: 8
+    half = div(size, 2)
+
+    # Triangle drawn in a 0..size box; tip on the side it points toward, then the
+    # svg is offset so that tip coincides with the (tip_x, tip_y) anchor.
+    {d, off_x} =
+      case dir do
+        :east -> {"M 0 0 L #{size} #{half} L 0 #{size} z", -size}
+        :west -> {"M #{size} 0 L 0 #{half} L #{size} #{size} z", 0}
+      end
+
+    %{
+      tip_x: tip_x,
+      tip_y: tip_y,
+      size: size,
+      d: d,
+      off_x: off_x,
+      off_y: -half,
+      variant_class: arrowhead_variant_class(variant)
+    }
+  end
+
+  # Keep the legacy `lg-arrow{,-invalid,-critical}` tokens so styling hooks and
+  # tests that keyed on the old marker ids still match.
+  defp arrowhead_variant_class(:invalid), do: "lg-arrow-invalid"
+  defp arrowhead_variant_class(:critical), do: "lg-arrow-critical"
+  defp arrowhead_variant_class(:normal), do: "lg-arrow"
 
   # Bundle source/target endpoint info with per-connector routing
   # overrides (or fallbacks to ctx defaults) so individual builders see
@@ -2359,17 +2525,6 @@ defmodule LiveGantt do
     }
   end
 
-  # Marker ids are scoped to the chart instance id so multiple gantts on
-  # one page don't share/override each other's `<defs>` entries (the
-  # second chart's paths would otherwise reference the first chart's
-  # markers and recolor with the wrong currentColor).
-  defp resolve_marker(true, _, chart_id), do: "url(##{marker_id("lg-arrow-invalid", chart_id)})"
-  defp resolve_marker(_, true, chart_id), do: "url(##{marker_id("lg-arrow-critical", chart_id)})"
-  defp resolve_marker(_, _, chart_id), do: "url(##{marker_id("lg-arrow", chart_id)})"
-
-  defp marker_id(base, nil), do: base
-  defp marker_id(base, chart_id), do: "#{base}-#{chart_id}"
-
   defp resolve_bool(nil, default), do: default
   defp resolve_bool(value, _default), do: value
 
@@ -2454,63 +2609,89 @@ defmodule LiveGantt do
     end)
   end
 
-  # Compute pixel anchors and stem directions for each dep type. `x1` and
-  # `x2` are the reference points the constraint is about — the `conflict?`
-  # check is the same `x2 < x1` for every type because of this.
-  #
-  # Milestones render as 10px diamonds centered on their date; we offset
-  # endpoints so arrows emerge from / land at the diamond tip (not its
-  # center) and never pierce the shape.
-  defp endpoints_for(type, from_event, to_event, range, day_px) do
+  # `{left_px, right_px}` of an event's bar AS RENDERED (honoring `min_bar_px`),
+  # so connector endpoints attach to the visible bar. A milestone collapses to
+  # its center point (the ±10px diamond offset is applied by the caller).
+  # Out-of-range falls back to raw temporal coords (the connector is typically
+  # not drawn in that case anyway).
+  defp rendered_edges(event, range, day_px, min_bar_px) do
+    case bar_geometry(event, range, day_px, min_bar_px) do
+      %{milestone: true, left_px: l} ->
+        {l, l}
+
+      %{left_px: l, width_px: w} ->
+        {l, l + w}
+
+      _ ->
+        {x_px(event.start, range.first, day_px),
+         x_px(LiveGantt.Task.effective_end(event), range.first, day_px)}
+    end
+  end
+
+  defp endpoints_for(type, from_event, to_event, range, day_px, min_bar_px) do
     from_is_milestone = milestone?(from_event)
     to_is_milestone = milestone?(to_event)
 
     source_ms_offset = if from_is_milestone, do: 10, else: 0
-    # Non-milestone gap is 4px (was 2): the arrowhead's tip extends ~2.4px
-    # past the path endpoint after the refX=6 change, so 4px of gap leaves
-    # ~1.6px between the arrow tip and the target bar's edge.
-    target_ms_gap = if to_is_milestone, do: 10, else: 4
+    # Target gap. For a BAR the arrow tip lands exactly on the bar's edge (gap
+    # 0) so it reads as connected at ANY responsive fill factor — the shaft SVG
+    # stretches with the bars, so a non-zero NATURAL gap would be magnified into
+    # a visible disconnect (e.g. a 4px gap → ~15px at a 3.8× fill). Visual
+    # breathing room comes from the fixed-px arrowhead overlay instead, whose tip
+    # sits on this point and whose body extends back over the shaft. Milestones
+    # keep a 10px gap so the arrow clears the diamond's tip.
+    target_ms_gap = if to_is_milestone, do: 10, else: 0
 
-    from_start_px = x_px(from_event.start, range.first, day_px)
-    from_end_px = x_px(LiveGantt.Task.effective_end(from_event), range.first, day_px)
-    to_start_px = x_px(to_event.start, range.first, day_px)
-    to_end_px = x_px(LiveGantt.Task.effective_end(to_event), range.first, day_px)
+    # DRAW from the RENDERED bar edges (honoring `min_bar_px`), so a sub-pixel
+    # task that renders wider than its true span still has its arrow attach to
+    # the bar AS DRAWN rather than emerging from inside it.
+    {from_start_px, from_end_px} = rendered_edges(from_event, range, day_px, min_bar_px)
+    {to_start_px, to_end_px} = rendered_edges(to_event, range, day_px, min_bar_px)
+
+    # JUDGE backward/invalid from the NATURAL temporal edges, NOT the rendered
+    # ones — the conflict is about the schedule, not the min-width-inflated
+    # render. (Otherwise a zero-gap FS dep — B starting exactly when A finishes —
+    # is wrongly flagged backward because A's 1px sliver pokes past B's start.)
+    from_start_nat = x_px(from_event.start, range.first, day_px)
+    from_end_nat = x_px(LiveGantt.Task.effective_end(from_event), range.first, day_px)
+    to_start_nat = x_px(to_event.start, range.first, day_px)
+    to_end_nat = x_px(LiveGantt.Task.effective_end(to_event), range.first, day_px)
 
     case type do
       :fs ->
         %{
           x1: from_end_px + source_ms_offset,
-          x2: to_start_px,
           arrow_stop: to_start_px - target_ms_gap,
           source_exit: :east,
-          target_entry: :west
+          target_entry: :west,
+          backward: conflict?(from_end_nat, to_start_nat)
         }
 
       :ss ->
         %{
           x1: from_start_px - source_ms_offset,
-          x2: to_start_px,
           arrow_stop: to_start_px - target_ms_gap,
           source_exit: :west,
-          target_entry: :west
+          target_entry: :west,
+          backward: conflict?(from_start_nat, to_start_nat)
         }
 
       :ff ->
         %{
           x1: from_end_px + source_ms_offset,
-          x2: to_end_px,
           arrow_stop: to_end_px + target_ms_gap,
           source_exit: :east,
-          target_entry: :east
+          target_entry: :east,
+          backward: conflict?(from_end_nat, to_end_nat)
         }
 
       :sf ->
         %{
           x1: from_start_px - source_ms_offset,
-          x2: to_end_px,
           arrow_stop: to_end_px + target_ms_gap,
           source_exit: :west,
-          target_entry: :east
+          target_entry: :east,
+          backward: conflict?(from_start_nat, to_end_nat)
         }
     end
   end
@@ -2821,7 +3002,14 @@ defmodule LiveGantt do
   # Precompute a lane index per backward FS connector so multiple arrows
   # with the same source row + direction don't stack on top of each
   # other. Returns a map keyed by `{from_id, to_id, type}` → integer.
-  defp assign_backward_lanes(normalized_connectors, events_by_id, row_positions, range, day_px) do
+  defp assign_backward_lanes(
+         normalized_connectors,
+         events_by_id,
+         row_positions,
+         range,
+         day_px,
+         min_bar_px
+       ) do
     normalized_connectors
     |> Enum.filter(fn c ->
       from_event = Map.get(events_by_id, c.from)
@@ -2840,8 +3028,10 @@ defmodule LiveGantt do
           false
 
         true ->
-          %{x1: x1, x2: x2} = endpoints_for(c.type, from_event, to_event, range, day_px)
-          conflict?(x1, x2)
+          %{backward: backward} =
+            endpoints_for(c.type, from_event, to_event, range, day_px, min_bar_px)
+
+          backward
       end
     end)
     |> Enum.group_by(fn c ->
@@ -3051,10 +3241,10 @@ defmodule LiveGantt do
   # If no bar-free x exists in the valid range, we keep the preferred
   # placement — an arrow crossing a bar is better than a broken shape.
 
-  defp compute_bar_obstacles(sorted_events, row_positions, range, day_px, row_px) do
+  defp compute_bar_obstacles(sorted_events, row_positions, range, day_px, row_px, min_bar_px) do
     Enum.map(sorted_events, fn event ->
       pos = Map.get(row_positions.positions, event.id)
-      bar = bar_geometry(event, range, day_px)
+      bar = bar_geometry(event, range, day_px, min_bar_px)
 
       # Milestone diamonds are ~16px rotated 45° — use a symmetric 11px
       # half-width hit box around their center (which equals bar.left_px
@@ -3528,10 +3718,19 @@ defmodule LiveGantt do
 
   # -- Milestone detection (zero-duration event) --
 
+  # A task is a milestone iff it has zero (fractional-day) duration — the SAME
+  # test `bar_geometry/3` uses (`fe - fs <= 0`). Measuring in fractional days
+  # (not date-truncated days) is essential since `:hour` zoom / sub-day
+  # temporals exist: a 2-hour task starts and ends on the same DATE, so a
+  # `Date.diff` test wrongly classified it as a milestone — the connector router
+  # then applied milestone endpoint offsets + the 10px diamond gap while the bar
+  # rendered as a thin bar, so arrows routed to/from a phantom diamond and
+  # appeared disconnected. For pure-`Date` events this is identical to the old
+  # `Date.diff` test (frac duration == date diff), so day/week/month is unchanged.
   defp milestone?(%LiveGantt.Task{} = event) do
-    start = to_date(event.start)
-    end_date = to_date(LiveGantt.Task.effective_end(event))
-    Date.diff(end_date, start) <= 0
+    ref = to_date(event.start)
+    duration = frac_days(LiveGantt.Task.effective_end(event), ref) - frac_days(event.start, ref)
+    duration <= 0
   end
 
   # -- Grouping --
@@ -4033,7 +4232,8 @@ defmodule LiveGantt do
          row_positions,
          row_px,
          range,
-         day_px
+         day_px,
+         min_bar_px
        ) do
     by_id = Map.new(sorted_events, &{&1.id, &1})
 
@@ -4061,7 +4261,7 @@ defmodule LiveGantt do
           []
 
         _ ->
-          bar = bar_geometry(parent, range, day_px)
+          bar = bar_geometry(parent, range, day_px, min_bar_px)
 
           if Map.get(bar, :out_of_range) do
             []
@@ -4182,8 +4382,8 @@ defmodule LiveGantt do
   # row_top+row_px). The bar itself has a 4px inset (top-1/bottom-1)
   # from the row, so badges anchor to the bar's visual corner not the
   # row's edge.
-  defp badge_position_style(corner, bar, row_px, corner_index) do
-    {x_anchor, y_anchor} = badge_anchor(corner, bar, row_px, corner_index)
+  defp badge_position_style(corner, bar, row_px, corner_index, content_width) do
+    {x_anchor, y_anchor} = badge_anchor(corner, bar, row_px, corner_index, content_width)
     "#{x_anchor}; #{y_anchor}"
   end
 
@@ -4197,24 +4397,37 @@ defmodule LiveGantt do
   @badge_size_px 16
   @badge_stack_step_px 18
 
-  defp badge_anchor(:top_left, bar, _, idx),
-    do: {"left: #{bar.left_px - @badge_overhang_px + idx * @badge_stack_step_px}px", "top: 0px"}
-
-  defp badge_anchor(:bottom_left, bar, row_px, idx),
+  # Badges anchor to a bar corner (a % position) plus a fixed px overhang /
+  # stack offset → `calc(P% + Npx)`, so they track the bar at any fill width
+  # while keeping their constant pixel overhang.
+  defp badge_anchor(:top_left, bar, _, idx, cw),
     do:
-      {"left: #{bar.left_px - @badge_overhang_px + idx * @badge_stack_step_px}px",
+      {badge_left(bar.left_px, -@badge_overhang_px + idx * @badge_stack_step_px, cw), "top: 0px"}
+
+  defp badge_anchor(:bottom_left, bar, row_px, idx, cw),
+    do:
+      {badge_left(bar.left_px, -@badge_overhang_px + idx * @badge_stack_step_px, cw),
        "top: #{row_px - @badge_size_px}px"}
 
-  defp badge_anchor(:bottom_right, bar, row_px, idx),
+  defp badge_anchor(:bottom_right, bar, row_px, idx, cw),
     do:
-      {"left: #{bar_right_px(bar) - @badge_size_px + @badge_overhang_px - idx * @badge_stack_step_px}px",
-       "top: #{row_px - @badge_size_px}px"}
+      {badge_left(
+         bar_right_px(bar),
+         -@badge_size_px + @badge_overhang_px - idx * @badge_stack_step_px,
+         cw
+       ), "top: #{row_px - @badge_size_px}px"}
 
   # Default = top_right.
-  defp badge_anchor(_, bar, _, idx),
+  defp badge_anchor(_, bar, _, idx, cw),
     do:
-      {"left: #{bar_right_px(bar) - @badge_size_px + @badge_overhang_px - idx * @badge_stack_step_px}px",
-       "top: 0px"}
+      {badge_left(
+         bar_right_px(bar),
+         -@badge_size_px + @badge_overhang_px - idx * @badge_stack_step_px,
+         cw
+       ), "top: 0px"}
+
+  defp badge_left(anchor_px, offset_px, content_width),
+    do: "left: calc(#{pct(anchor_px, content_width)}% + #{offset_px}px)"
 
   # Milestones have width 0 — render right-of-center.
   defp bar_right_px(%{width: 0, left: l}), do: l
@@ -4315,10 +4528,10 @@ defmodule LiveGantt do
   # `top` (row_top + 4 to match the bar's `top-1` inset), and at least
   # as wide as the bar so it visually grows downward (and rightward
   # when the title needs more room) rather than floating separately.
-  defp popover_style(bar, row_px) do
-    "left: #{bar.left_px}px; " <>
+  defp popover_style(bar, row_px, content_width) do
+    "left: #{pct(bar.left_px, content_width)}%; " <>
       "top: #{popover_top_inset()}px; " <>
-      "min-width: #{bar.width_px}px; " <>
+      "min-width: #{pct(bar.width_px, content_width)}%; " <>
       "min-height: #{row_px - 2 * popover_top_inset()}px"
   end
 
@@ -4417,6 +4630,7 @@ defmodule LiveGantt do
   attr :corner_index, :integer, required: true
   attr :bar, :map, required: true
   attr :row_px, :integer, required: true
+  attr :content_width, :integer, required: true
   attr :event_id, :string, required: true
   attr :class, :string, required: true
   attr :default_color, :string, required: true
@@ -4434,7 +4648,7 @@ defmodule LiveGantt do
         @badge[:flash] && "animate-pulse",
         @badge[:class]
       ]}
-      style={badge_position_style(@corner, @bar, @row_px, @corner_index)}
+      style={badge_position_style(@corner, @bar, @row_px, @corner_index, @content_width)}
       data-event-id={@event_id}
       data-badge-corner={@corner}
       data-row-px={@row_px}
@@ -4589,7 +4803,6 @@ defmodule LiveGantt do
 
   # -- Date helpers --
 
-  defp to_date(%Date{} = d), do: d
   defp to_date(%Date{} = d), do: d
   defp to_date(%DateTime{} = dt), do: DateTime.to_date(dt)
   defp to_date(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_date(ndt)

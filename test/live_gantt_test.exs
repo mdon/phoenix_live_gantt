@@ -1131,8 +1131,10 @@ defmodule LiveGanttTest do
 
       html = render(~H[<.gantt id="h" events={@events} date_range={@range} zoom={:hour} />])
 
-      assert html =~ ~s(left: 270px)
-      assert html =~ ~s(width: 60px)
+      # Horizontal coords render as % of content width (1440px = 2d × 720):
+      # left 270/1440 = 18.75%, width 60/1440 = 4.1667%.
+      assert html =~ ~s(left: 18.75%)
+      assert html =~ ~s(width: 4.1667%)
       # 24 hour-columns per day × 2 days = 48 columns.
       assert (html |> String.split("lg-col-header") |> length()) - 1 == 48
     end
@@ -1162,15 +1164,17 @@ defmodule LiveGanttTest do
 
       assigns = %{events: events, range: Date.range(~D[2026-04-01], ~D[2026-04-02])}
 
-      # 2-day range. Default :day zoom is 40px/day (content 80px); override to
-      # 100px/day → content 200px and the 1-day bar is 100px wide.
+      # Coordinates are now % of content width (responsive), so `day_width_px`
+      # sets the natural CONTENT width (the scroll min-width), not bar pixels.
+      # Override 100px/day on a 2-day range → min-width 200px; the 1-day bar is
+      # 50% wide regardless.
       html =
         render(
           ~H[<.gantt id="g" events={@events} date_range={@range} zoom={:day} day_width_px={100} />]
         )
 
-      assert html =~ "width: 200px"
-      assert html =~ "left: 0px; width: 100px"
+      assert html =~ "min-width: 200px"
+      assert html =~ "left: 0.0%; width: 50.0%"
     end
 
     test "default_day_width_px/1 exposes the per-zoom defaults" do
@@ -2068,9 +2072,10 @@ defmodule LiveGanttTest do
         render(~H"<.gantt events={@events} date_range={@range} connectors={@connectors} />")
 
       # In 5-seg detour `M x1 y1 H stem_out`, stem_out = x1 + exit_stem.
-      # x1 = 4*24 = 96, stem_out = 121. arrow_stop = 19*24 - 4 = 452 (4px
-      # gap so the wider arrowhead doesn't overlap the target). stem_in = 447.
-      assert Regex.match?(~r/d="M 96 \d+ H 121 V \d+ H 447/, html)
+      # x1 = 4*24 = 96, stem_out = 121. arrow_stop = 19*24 = 456 (gap 0: the tip
+      # lands on the target edge, the fixed-px arrowhead gives the separation).
+      # stem_in = arrow_stop - entry_stem = 451.
+      assert Regex.match?(~r/d="M 96 \d+ H 121 V \d+ H 451/, html)
     end
 
     test "avoid_collisions: false disables per-connector collision shifts" do
@@ -2609,6 +2614,41 @@ defmodule LiveGanttTest do
       refute html =~ "lg-bar-popover-actions"
     end
 
+    test "renders a clickable tiny-bar marker inside a container-query container" do
+      assigns = %{events: [event_no_actions()], range: sample_range()}
+      html = render(~H[<.gantt id="c" events={@events} date_range={@range} />])
+
+      # Per-task container whose width tracks the bar's rendered width, made a
+      # container-query target; the down-triangle marker lives inside it, wired
+      # to the SAME popover so it's clickable.
+      assert html =~ "lg-tiny-container"
+      assert html =~ "container-type: inline-size"
+      assert html =~ "lg-tiny-marker"
+      assert html =~ "clip-path: polygon(0 0, 100% 0, 50% 100%)"
+      assert html =~ ~s(data-popover-target="c-bar-popover-t2")
+
+      # Visibility is PURE CSS — no JS: hidden by default, revealed by a
+      # container query at the (default 5px) threshold.
+      assert html =~ ".lg-tiny-marker{display:none}"
+      assert html =~ "@container (max-width:5px)"
+    end
+
+    test "tiny_bar_px sets the container-query threshold" do
+      assigns = %{events: [event_no_actions()], range: sample_range()}
+      html = render(~H"<.gantt events={@events} date_range={@range} tiny_bar_px={12} />")
+
+      assert html =~ "@container (max-width:12px)"
+    end
+
+    test "tiny_bar_px={0} disables the marker entirely" do
+      assigns = %{events: [event_no_actions()], range: sample_range()}
+      html = render(~H"<.gantt events={@events} date_range={@range} tiny_bar_px={0} />")
+
+      refute html =~ "lg-tiny-marker"
+      refute html =~ "lg-tiny-container"
+      refute html =~ "@container"
+    end
+
     test "renders popover with title + action button when actions present" do
       action = %{
         id: "comments",
@@ -2700,12 +2740,13 @@ defmodule LiveGanttTest do
 
       # Extract bar's left and popover's left — should match exactly so
       # the popover anchors to the bar's left edge regardless of zoom.
+      # Coords render as % of content width; bar + popover share the same %.
       [_, bar_left] =
-        Regex.run(~r/id="lg-bar-t1"[^>]*style="left: (\d+)px/, html)
+        Regex.run(~r/id="lg-bar-t1"[^>]*style="left: ([\d.]+)%/, html)
 
       [_, pop_left] =
         Regex.run(
-          ~r/id="lg-bar-popover-t1"[^>]*style="left: (\d+)px/,
+          ~r/id="lg-bar-popover-t1"[^>]*style="left: ([\d.]+)%/,
           html
         )
 
@@ -2739,13 +2780,13 @@ defmodule LiveGanttTest do
       html =
         render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
 
-      # bar width — Apr 12..Apr 18 = 6 days * 24px = 144px at week zoom
+      # bar width as % of content; popover min-width matches it.
       [_, bar_width] =
-        Regex.run(~r/id="lg-bar-t2"[^>]*style="left: \d+px; width: (\d+)px/, html)
+        Regex.run(~r/id="lg-bar-t2"[^>]*style="left: [\d.]+%; width: ([\d.]+)%/, html)
 
       [_, pop_min_width] =
         Regex.run(
-          ~r/id="lg-bar-popover-t2"[^>]*style="[^"]*min-width: (\d+)px/,
+          ~r/id="lg-bar-popover-t2"[^>]*style="[^"]*min-width: ([\d.]+)%/,
           html
         )
 
@@ -3285,10 +3326,10 @@ defmodule LiveGanttTest do
       html =
         render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
 
-      # Children span Apr 1 → Apr 10. At week zoom (24 px/day) and a
-      # sample_range starting Apr 1, that's left=0px, width=9*24=216px.
+      # Children span Apr 1 → Apr 10 = 216px (9d × 24) of a 1440px content
+      # width (60-day sample_range × 24). As % of content: left 0%, width 15%.
       assert html =~
-               ~r/id="lg-bar-p"[^>]*style="left: 0px; width: 216px/
+               ~r/id="lg-bar-p"[^>]*style="left: 0.0%; width: 15.0%/
     end
 
     test "connector to a collapsed child retargets to the parent" do
@@ -3546,7 +3587,7 @@ defmodule LiveGanttTest do
   end
 
   describe "multi-instance isolation" do
-    test "SVG marker ids are scoped to the chart id so two gantts don't share defs" do
+    test "arrowheads render as a self-contained overlay, sharing no SVG defs" do
       events = sample_events()
       connectors = [%{from: "t1", to: "t2", type: :fs}]
       assigns = %{events: events, range: sample_range(), connectors: connectors}
@@ -3561,15 +3602,16 @@ defmodule LiveGanttTest do
           ~H[<.gantt id="beta" events={@events} date_range={@range} connectors={@connectors} />]
         )
 
-      # Marker defs are id-scoped
-      assert html_a =~ ~s(id="lg-arrow-alpha")
-      assert html_b =~ ~s(id="lg-arrow-beta")
-      # Paths reference the scoped markers
-      assert html_a =~ "url(#lg-arrow-alpha)"
-      assert html_b =~ "url(#lg-arrow-beta)"
-      # And do NOT cross-reference each other's markers
-      refute html_a =~ "url(#lg-arrow-beta)"
-      refute html_b =~ "url(#lg-arrow-alpha)"
+      # Each chart draws its own arrowhead overlay.
+      assert html_a =~ "lg-arrowhead"
+      assert html_b =~ "lg-arrowhead"
+
+      # Arrowheads no longer rely on shared `<defs>`/`<marker>` entries or
+      # `url(#...)` references — so two gantts on one page can't collide on
+      # marker ids (the bug the old id-scoping guarded against is now structural).
+      refute html_a =~ "<marker"
+      refute html_a =~ "url(#"
+      refute html_b =~ "url(#"
     end
   end
 

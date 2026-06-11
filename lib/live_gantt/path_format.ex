@@ -93,6 +93,77 @@ defmodule LiveGantt.PathFormat do
     end
   end
 
+  @doc """
+  All absolute `{x, y}` points of an `M`/`H`/`V` path, in order. Works for any
+  shape the renderer emits — the 3-segment forward, 5-segment detour, and the
+  consolidator's N-segment jog — not just the two canonical regex forms.
+
+      iex> PathFormat.points("M 100 20 H 130 V 60 H 180")
+      [{100, 20}, {130, 20}, {130, 60}, {180, 60}]
+  """
+  @spec points(String.t()) :: [{number(), number()}]
+  def points(d) when is_binary(d) do
+    d
+    |> String.split(~r/\s+/, trim: true)
+    |> walk_points({0, 0}, [])
+    |> Enum.reverse()
+  end
+
+  @doc """
+  Terminal point + final-segment direction of any `M`/`H`/`V` path. The
+  direction is where the LAST segment travels (`:east`/`:west` for a horizontal
+  finish, `:south`/`:north` for vertical, `nil` for a zero-length/degenerate
+  finish). Used to place the arrowhead overlay on the shaft's true end.
+
+      iex> PathFormat.terminal("M 100 20 H 130 V 60 H 180")
+      %{x: 180, y: 60, dir: :east}
+  """
+  @spec terminal(String.t()) :: %{x: number(), y: number(), dir: atom() | nil}
+  def terminal(d) when is_binary(d) do
+    case points(d) do
+      [_ | _] = pts ->
+        {tx, ty} = List.last(pts)
+
+        dir =
+          case Enum.take(pts, -2) do
+            [{px, py}, _last] -> segment_dir(px, py, tx, ty)
+            _ -> nil
+          end
+
+        %{x: tx, y: ty, dir: dir}
+
+      _ ->
+        %{x: 0, y: 0, dir: nil}
+    end
+  end
+
+  defp segment_dir(px, py, tx, ty) do
+    cond do
+      tx == px and ty == py -> nil
+      abs(tx - px) >= abs(ty - py) -> if tx >= px, do: :east, else: :west
+      true -> if ty >= py, do: :south, else: :north
+    end
+  end
+
+  defp walk_points([], _cur, acc), do: acc
+
+  defp walk_points(["M", x, y | rest], _cur, acc) do
+    pt = {to_n(x), to_n(y)}
+    walk_points(rest, pt, [pt | acc])
+  end
+
+  defp walk_points(["H", x | rest], {_cx, cy}, acc) do
+    pt = {to_n(x), cy}
+    walk_points(rest, pt, [pt | acc])
+  end
+
+  defp walk_points(["V", y | rest], {cx, _cy}, acc) do
+    pt = {cx, to_n(y)}
+    walk_points(rest, pt, [pt | acc])
+  end
+
+  defp walk_points([_other | rest], cur, acc), do: walk_points(rest, cur, acc)
+
   defp forward_re,
     do: ~r/^M ([\d.\-]+) ([\d.\-]+) H ([\d.\-]+) V ([\d.\-]+) H ([\d.\-]+)$/
 

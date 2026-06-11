@@ -50,4 +50,31 @@ defmodule LiveGantt.PathFormatTest do
                PathFormat.parse(d)
     end
   end
+
+  describe "points/1 and terminal/1" do
+    test "points/1 enumerates absolute vertices of a forward path" do
+      assert PathFormat.points("M 100 20 H 130 V 60 H 180") ==
+               [{100, 20}, {130, 20}, {130, 60}, {180, 60}]
+    end
+
+    test "terminal/1 returns the last point + final-segment direction (east)" do
+      assert %{x: 180, y: 60, dir: :east} = PathFormat.terminal("M 100 20 H 130 V 60 H 180")
+    end
+
+    test "terminal/1 sees a westward final segment (e.g. SS / backward)" do
+      assert %{x: 40, y: 60, dir: :west} = PathFormat.terminal("M 100 20 H 70 V 60 H 40")
+    end
+
+    test "terminal/1 follows the TRUE end of a multi-hop jog, not the canonical y2" do
+      # The consolidator emits N-segment jogs PathFormat.parse can't classify.
+      # For an UPWARD connector it ends at the source y (y_bot = max(y1,y2)),
+      # NOT the target's y — the arrowhead must follow this real terminal.
+      d = "M 100 200 H 130 V 170 H 160 V 140 H 190 V 120 H 220"
+
+      assert %{x: 220, y: 120, dir: :east} = PathFormat.terminal(d)
+      # ...and the canonical parser indeed can't read it (justifying the
+      # generic walker the overlay relies on).
+      assert %{kind: :unknown} = PathFormat.parse(d)
+    end
+  end
 end

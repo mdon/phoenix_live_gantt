@@ -45,9 +45,10 @@ defmodule LiveGantt.Inspector do
   """
   @spec inspect_html(binary()) :: map()
   def inspect_html(html) when is_binary(html) do
+    content_width = extract_content_width(html)
     rows = extract_rows(html)
     row_positions = extract_row_positions(html, rows)
-    bars = extract_bars(html, row_positions)
+    bars = extract_bars(html, row_positions, content_width)
     parent_map = extract_parent_map(html)
     bars = decorate_with_parent_info(bars, parent_map)
 
@@ -56,8 +57,9 @@ defmodule LiveGantt.Inspector do
       row_positions: row_positions,
       bars: bars,
       parent_map: parent_map,
-      subproject_frames: extract_subproject_frames(html),
+      subproject_frames: extract_subproject_frames(html, content_width),
       connectors: extract_connectors(html),
+      arrowheads: extract_arrowheads(html, content_width),
       edges: extract_edges(html)
     }
   end
@@ -118,27 +120,53 @@ defmodule LiveGantt.Inspector do
   # Bars: left + width + (derived from row_positions) top + bottom
   # for full pixel rectangles. Milestones get an 11px half-width hit box
   # matching `compute_bar_obstacles/5` in the Waterfall.
-  defp extract_bars(html, row_positions) do
+  # Horizontal geometry renders as PERCENTAGES of the content width (responsive
+  # layout). We reconstruct PIXELS (`pct/100 * content_width`) so the Inspector
+  # keeps its pixel contract and stays comparable with connector paths (which
+  # are still emitted in pixels).
+  defp extract_bars(html, row_positions, content_width) do
     bars =
       Regex.scan(
-        ~r/class="lg-bar[^"]*"\s+style="left: (\d+)px; width: (\d+)px"[^>]*phx-value-event-id="([^"]+)"/,
+        ~r/class="lg-bar[^"]*"\s+style="left: ([\d.]+)%; width: ([\d.]+)%"[^>]*phx-value-event-id="([^"]+)"/,
         html
       )
       |> Enum.map(fn [_, left, width, id] ->
         {id,
-         build_bar(:bar, id, String.to_integer(left), String.to_integer(width), row_positions)}
+         build_bar(
+           :bar,
+           id,
+           to_px(left, content_width),
+           to_px(width, content_width),
+           row_positions
+         )}
       end)
 
     milestones =
       Regex.scan(
-        ~r/class="lg-milestone[^"]*"\s+style="left: (\d+)px[^"]*"[^>]*phx-value-event-id="([^"]+)"/,
+        ~r/class="lg-milestone[^"]*"\s+style="left: ([\d.]+)%[^"]*"[^>]*phx-value-event-id="([^"]+)"/,
         html
       )
       |> Enum.map(fn [_, left, id] ->
-        {id, build_bar(:milestone, id, String.to_integer(left), 0, row_positions)}
+        {id, build_bar(:milestone, id, to_px(left, content_width), 0, row_positions)}
       end)
 
     Map.new(bars ++ milestones)
+  end
+
+  # Both `min-width` occurrences (header time wrapper + timeline column) equal
+  # the content width; grab the first.
+  defp extract_content_width(html) do
+    case Regex.run(~r/min-width: (\d+)px/, html) do
+      [_, w] -> String.to_integer(w)
+      _ -> 0
+    end
+  end
+
+  defp to_px(pct_str, content_width) do
+    case Float.parse(pct_str) do
+      {pct, _} -> round(pct / 100 * content_width)
+      :error -> 0
+    end
   end
 
   defp build_bar(:bar, id, left, width, row_positions) do
@@ -194,6 +222,27 @@ defmodule LiveGantt.Inspector do
   # to build paths), so parser and builder stay in sync.
   defp parse_path(d), do: PathFormat.parse(d)
 
+  # -- Arrowheads --
+
+  # Arrowheads render in a separate non-stretched overlay: a `lg-arrowhead`
+  # div positioned by `left: P%` (of the content width) + `top: Ypx`, with the
+  # connector's from/to ids. Reconstruct the px tip so it can be compared
+  # against the connector path's terminal point.
+  defp extract_arrowheads(html, content_width) do
+    Regex.scan(
+      ~r/class="lg-arrowhead[^"]*"\s+style="left: ([\d.]+)%; top: (\d+)px"\s+data-from-id="([^"]+)"\s+data-to-id="([^"]+)"/,
+      html
+    )
+    |> Enum.map(fn [_, left, top, from, to] ->
+      %{
+        from: from,
+        to: to,
+        tip_x: to_px(left, content_width),
+        tip_y: String.to_integer(top)
+      }
+    end)
+  end
+
   # -- Edge indicators --
 
   defp extract_edges(html) do
@@ -238,16 +287,17 @@ defmodule LiveGantt.Inspector do
   # Sub-project frames are translucent rectangles drawn in the
   # timeline column behind each EXPANDED sub-project. Extracts
   # their geometry so tests can assert on placement.
-  defp extract_subproject_frames(html) do
+  defp extract_subproject_frames(html, content_width) do
     Regex.scan(
-      ~r/lg-subproject-frame[^"]*"\s+style="left: (\d+)px; top: (\d+)px; width: (\d+)px; height: (\d+)px;[^"]*background-color: ([^;]+);/,
+      ~r/lg-subproject-frame[^"]*"\s+style="left: ([\d.]+)%; top: (\d+)px; width: ([\d.]+)%; height: (\d+)px;[^"]*background-color: ([^;]+);/,
       html
     )
     |> Enum.map(fn [_, left, top, width, height, bg] ->
       %{
-        left_px: String.to_integer(left),
+        # left/width render as % of content width; reconstruct px.
+        left_px: to_px(left, content_width),
         top_y: String.to_integer(top),
-        width: String.to_integer(width),
+        width: to_px(width, content_width),
         height: String.to_integer(height),
         background_color: String.trim(bg)
       }

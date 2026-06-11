@@ -43,9 +43,60 @@ standalone package.
   open, instead of trusting its (frozen, `phx-update="ignore"`) server-
   rendered position. Fixes popovers opening far from their bar after the
   chart re-rendered with new geometry — e.g. switching zoom.
+- Connector arrowheads no longer distort under the responsive fill. They were
+  SVG `<marker>`s inside the `preserveAspectRatio="none"` shaft SVG, so at high
+  fill factors they stretched into thin, disconnected-looking triangles. They
+  now render in a fixed-px overlay anchored by `%` to the shaft's true terminal
+  point (`LiveGantt.PathFormat.terminal/1`), so the head stays on the shaft end
+  even when `consolidate_piercing_trunks` re-routes a forward path to end at a
+  different y (the old marker rode the path, the overlay must re-derive it).
+  New `Inspector` arrowhead extraction + `TestHelpers.assert_arrowheads_at_path_ends/2`
+  (wired into `find_geometry_issues/2`) lock the head-meets-shaft invariant.
+- Sub-day tasks are no longer mis-routed as milestones. `milestone?/1` (connector
+  routing) tested `Date.diff(end, start) <= 0`, so any task shorter than a full
+  day — common at `:hour` zoom — started and ended on the same DATE and was
+  treated as a zero-duration milestone, even though `bar_geometry/3` (which uses
+  fractional days) rendered it as a thin bar. The router then applied milestone
+  endpoint offsets + the 10px diamond gap and frequently mis-flagged the
+  dependency as backward (dashed), so arrows routed to/from a phantom diamond and
+  looked disconnected. `milestone?/1` now uses the same fractional-day duration
+  test as `bar_geometry/3` (identical to the old behavior for pure-`Date` events).
+- Arrow tips now land ON the target bar's edge (gap 0) instead of a 4px natural
+  gap. Under the responsive fill the shaft SVG stretches with the bars, so a
+  natural-px gap was magnified into a visible disconnect (4px → ~15px at a 3.8×
+  fill); the fixed-px arrowhead overlay now supplies the visual separation, so
+  arrows read as connected at any fill factor. (Milestone targets keep their
+  diamond-clearance gap.)
 
 ### Features
 
+- **`tiny_bar_px` attr (default `5`) — "too small to see" marker.** A bar whose
+  TRUE width renders narrower than this many SCREEN pixels gets a small
+  fixed-size down-triangle at the task's start, signalling a task that's there
+  but too short to see. The decision is **pure CSS** — each marker lives inside a
+  per-task `container-type: inline-size` element whose width tracks the bar's
+  rendered width, and an injected container query (`@container (max-width:
+  {tiny_bar_px}px)`) reveals it. So it's server-emitted and browser-resolved
+  against true screen pixels: correct under the responsive fill + zoom, **instant
+  on first paint** (no socket/hook/measurement), and re-resolved on resize by the
+  browser with zero JavaScript. The marker is clickable (opens the same popover —
+  that part needs `enable_hooks`). Set `0` to disable. Pairs with `min_bar_px: 0`
+  (the default) so bars stay honest while hairline tasks remain discoverable.
+  Assumes a uniform `tiny_bar_px` across charts sharing a page.
+- **`min_bar_px` attr (default `0`) — bars reflect their TRUE duration.**
+  Previously every non-milestone bar was floored to a 4px minimum so a short
+  task stayed a visible sliver. That made the bar overstate the task's span and
+  diverge from the connector geometry (arrows attached to a phantom edge). The
+  floor is now opt-in: by default a bar is exactly as wide as its duration (a
+  task too short to show at the current zoom is a hairline / vanishes until you
+  zoom in), so the chart is honest and connectors attach to the real edge. Set
+  `min_bar_px` to e.g. `4` to restore the always-visible-sliver behavior. (A
+  zero-DURATION task is still a milestone diamond regardless.) Connector endpoints
+  are DRAWN from the RENDERED bar edges (so a non-zero `min_bar_px` stays
+  consistent with where arrows attach), but the backward/invalid ("time-travel")
+  decision is JUDGED from the NATURAL temporal edges — otherwise a zero-gap FS
+  dependency (B starting exactly when A finishes) would be falsely flagged
+  backward by A's min-width sliver poking past B's start.
 - **`:hour` zoom + continuous coordinates.** The positioning axis is now a
   continuous "fractional days from range start" used uniformly by bars, the
   today marker, connector endpoints, and columns — so a `:hour` zoom (and
@@ -56,13 +107,21 @@ standalone package.
   wall-clock time (DST-safe). `LiveGantt.Layout.sequential/2` gained a
   `:min_span` `{unit, n}` option and emits sub-day temporals when its
   `:start`/`:advance` do.
-- **Fit-to-width.** A `day_width_px` attr overrides the per-zoom density, and a
-  `fit_width` flag makes the container report its available width
-  (`"lg-fit-width"` event, `%{"available_px" => n}`, on mount + resize via the
-  `LgAutoScroll` hook) so a consumer can size px-per-day to fill the viewport
-  instead of leaving an empty gap after a short chart. `default_day_width_px/1`
-  exposes the per-zoom defaults to use as the floor (fitting only ever widens;
-  long charts keep their density and scroll).
+- **Responsive fit-to-width (pure CSS, no round-trip).** Horizontal geometry
+  (bars, columns, today marker, sub-project frames, badges, popovers) now
+  renders as PERCENTAGES of the content width, and the timeline uses
+  `width: 100%; min-width: {content_px}px` inside `overflow-x-auto`. A short
+  chart fills the container exactly (no gap); a long one scrolls at its natural
+  density — instantly, on first paint, with zero measurement or server
+  round-trip. The connector SHAFT SVG keeps a pixel viewBox but renders
+  `width: 100%` with `preserveAspectRatio="none"` + `vector-effect="non-scaling-stroke"`,
+  so the lines scale in lockstep with the bars and stay aligned at any width (the
+  connector router is unchanged). Arrow**heads** are drawn in a SEPARATE,
+  non-stretched overlay (positioned by `%` so the tip tracks the bar-aligned
+  shaft end, but sized in fixed px so the triangle never distorts) — a stretched
+  line is still a correct line, but a stretched triangle is not an arrowhead.
+  `day_width_px` now sets the natural content width (scroll threshold /
+  density); `default_day_width_px/1` exposes the per-zoom defaults.
 - **Off-screen Today hint.** When `today` falls outside `date_range`, a
   directional pill (`← Today` / `Today →`) now pins to the edge pointing
   toward today, instead of the consumer having to widen the axis to keep the

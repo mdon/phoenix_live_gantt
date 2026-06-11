@@ -37,25 +37,11 @@
         // Wait one frame so layout is settled before we measure.
         requestAnimationFrame(() => this._scrollToToday(false));
       }
-
-      // Fit-to-width: report the available timeline width so the consumer can
-      // recompute pixels-per-day to fill the viewport. Debounced; pushes only
-      // when the width actually changes (so it doesn't loop on the resulting
-      // re-render). The server owns the recompute — the hook only measures.
-      this._lastFitAvailable = null;
-      this._onResize = () => this._reportFitWidth();
-      window.addEventListener("resize", this._onResize);
-      requestAnimationFrame(() => this._reportFitWidth());
     },
     destroyed() {
       this.el.removeEventListener("lg:scroll-today", this._onScrollToday);
-      if (this._onResize) window.removeEventListener("resize", this._onResize);
     },
     updated() {
-      // Container size can change without a window resize (sidebar toggles,
-      // layout shifts) — re-measure on patches too; the changed-guard stops loops.
-      this._reportFitWidth();
-
       // Only re-scroll when the today marker actually moved (e.g.
       // date-range navigation shifts it). Without this check, every
       // unrelated LiveView patch (popover-open round-trips, expand /
@@ -71,17 +57,6 @@
       this._lastMarkerLeft = left;
 
       requestAnimationFrame(() => this._scrollToToday(false));
-    },
-    _reportFitWidth() {
-      if (this.el.dataset.fitWidth !== "true") return;
-
-      const labelHeader = this.el.querySelector(".lg-label-header");
-      const labelWidth = labelHeader ? labelHeader.offsetWidth : 0;
-      const available = Math.max(0, Math.round(this.el.clientWidth - labelWidth));
-
-      if (available === 0 || available === this._lastFitAvailable) return;
-      this._lastFitAvailable = available;
-      this.pushEvent("lg-fit-width", { available_px: available });
     },
     _scrollToToday(smooth) {
       const marker = this.el.querySelector(".lg-today");
