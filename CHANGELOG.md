@@ -26,6 +26,13 @@ standalone package.
 
 ### Fixes
 
+- An open bar/label popover now sits above everything else in the chart
+  (`z-[60]`). It was `z-40` — tying with milestone diamonds — and since rows are
+  `position: relative` with no z-index (one shared stacking context), a popover
+  that overhung the row below lost to that row's diamond by DOM paint order and
+  got clipped. Clicking a milestone in a stack of same-date diamonds now shows an
+  un-occluded popover. (Above bars z-10, today line z-30, diamonds z-40, and
+  badges z-50.)
 - Milestone diamonds are now clickable. They rendered with `cursor-pointer`
   (the default `milestone_class`) but carried no popover wiring — only the
   optional `on_event_click` — so a consumer that relied on the built-in popover

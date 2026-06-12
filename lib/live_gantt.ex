@@ -397,9 +397,15 @@ defmodule LiveGantt do
   # registered with the rest of the LiveGantt hooks). Action map
   # shape: `%{icon, tooltip, phx_click, phx_value, phx_target, href,
   # label, class, id}`.
+  # `z-[60]` puts an open popover above EVERYTHING else in the chart — bars
+  # (z-10), the today line (z-30), milestone diamonds (z-40), and badges (z-50).
+  # All those share one stacking context (rows are `position: relative` with no
+  # z-index, so they don't make their own), so a popover tying at z-40 with the
+  # diamonds would lose to a later row's diamond by DOM order and get clipped
+  # where it overhangs the row below. The popover is the focused element; it wins.
   attr :bar_popover_class, :string,
     default:
-      "absolute z-40 max-w-md rounded-md shadow-lg border-2 border-base-content overflow-hidden hidden"
+      "absolute z-[60] max-w-md rounded-md shadow-lg border-2 border-base-content overflow-hidden hidden"
 
   # Title row: matches the bar's vertical metrics (height + 4px inset
   # via top-1 bottom-1 + center alignment) so the title's apparent
@@ -441,7 +447,7 @@ defmodule LiveGantt do
   # popover visually breaks out into the timeline area.
   attr :label_popover_class, :string,
     default:
-      "absolute left-2 right-2 z-40 rounded-md shadow-lg border-2 border-base-content overflow-hidden hidden"
+      "absolute left-2 right-2 z-[60] rounded-md shadow-lg border-2 border-base-content overflow-hidden hidden"
 
   # Badges (notification-style numbers/text in corners of bars + action
   # buttons). Per-event badges live on `event.extra.badges` (a list of
