@@ -79,7 +79,6 @@ defmodule LiveGantt.Task do
     :text_color,
     :icon,
     :class,
-    :border_color,
 
     # Project metadata
     :category,
@@ -104,7 +103,6 @@ defmodule LiveGantt.Task do
           text_color: String.t() | nil,
           icon: String.t() | nil,
           class: String.t() | nil,
-          border_color: String.t() | nil,
           category: String.t() | nil,
           assignee: String.t() | nil,
           progress_pct: number() | nil,

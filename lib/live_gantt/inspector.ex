@@ -1,7 +1,7 @@
 defmodule LiveGantt.Inspector do
   @moduledoc """
-  Pure-function HTML scraper for Waterfall output. Takes the rendered
-  HTML string (as produced by `Waterfall.waterfall/1` →
+  Pure-function HTML scraper for LiveGantt output. Takes the rendered
+  HTML string (as produced by `LiveGantt.gantt/1` →
   `Phoenix.HTML.Safe.to_iodata/1`) and returns a structured geometry
   map.
 
@@ -15,12 +15,21 @@ defmodule LiveGantt.Inspector do
 
   ## Output shape
 
-      %{
-        rows: ["wf-task-1", "wf-task-2", ...],   # event ids in document order
-        bars: %{
-          "wf-task-1" => %{kind: :bar | :milestone, left: 100, width: 240}
-        },
-        connectors: [
+  `inspect_html/1` returns a map with these keys:
+
+    * `rows` — event ids in document order, e.g. `["wf-task-1", "wf-task-2", ...]`.
+    * `row_positions` — `%{event_id => %{top:, height:, center:, bottom:}}`,
+      the px geometry of each label row (group headers advance y but get no
+      entry of their own).
+    * `bars` — `%{event_id => %{kind: :bar | :milestone, left:, width:, right:,
+      top:, bottom:, parent_id:, ...}}`. Milestones also carry a `hit_box`.
+    * `parent_map` — `%{child_id => parent_id}` scraped from `data-parent-id`,
+      i.e. the sub-project tree (only EXPANDED sub-projects appear).
+    * `subproject_frames` — list of the translucent backing rectangles drawn
+      behind expanded sub-projects: `%{left_px:, top_y:, width:, height:,
+      background_color:}`.
+    * `connectors` — list of connector maps:
+
           %{
             from: "wf-task-1",
             to: "wf-task-2",
@@ -30,9 +39,10 @@ defmodule LiveGantt.Inspector do
             raw_path: "M 100 20 H 110 V 60 H 156",
             segments: %{kind: :forward | :detour, x1: ..., y1: ..., ...}
           }
-        ],
-        edges: %{earlier: int, later: int}
-      }
+
+    * `arrowheads` — list of arrowhead-overlay tips, one per connector:
+      `%{from:, to:, tip_x:, tip_y:}`.
+    * `edges` — off-screen edge-indicator counts: `%{earlier: int, later: int}`.
 
   All numeric values are integers (or floats if the path uses decimals).
   """
@@ -40,7 +50,7 @@ defmodule LiveGantt.Inspector do
   alias LiveGantt.PathFormat
 
   @doc """
-  Parse a Waterfall HTML render into a structured geometry map.
+  Parse a LiveGantt HTML render into a structured geometry map.
   See module doc for the output shape.
   """
   @spec inspect_html(binary()) :: map()
@@ -119,7 +129,7 @@ defmodule LiveGantt.Inspector do
 
   # Bars: left + width + (derived from row_positions) top + bottom
   # for full pixel rectangles. Milestones get an 11px half-width hit box
-  # matching `compute_bar_obstacles/5` in the Waterfall.
+  # matching `compute_bar_obstacles/5` in LiveGantt.
   # Horizontal geometry renders as PERCENTAGES of the content width (responsive
   # layout). We reconstruct PIXELS (`pct/100 * content_width`) so the Inspector
   # keeps its pixel contract and stays comparable with connector paths (which
@@ -338,7 +348,13 @@ defmodule LiveGantt.Inspector do
     |> Enum.map(fn {child, _} -> child end)
   end
 
-  @doc "True iff `id` is rendered as a sub-project roll-up bar."
+  @doc """
+  True iff `id` has at least one child currently in the DOM — i.e. an EXPANDED
+  sub-project. `parent_map` is scraped from rendered children, so a COLLAPSED
+  sub-project returns `false` even though its roll-up bar is on screen. Use it to
+  assert that a sub-project's children rendered, not as a general "is this a
+  sub-project" check.
+  """
   def subproject?(geom, id) do
     Enum.any?(geom.parent_map, fn {_, parent} -> parent == id end)
   end

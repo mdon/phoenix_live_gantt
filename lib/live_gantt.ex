@@ -41,8 +41,10 @@ defmodule LiveGantt do
   ## Coordinate system
 
   Everything is pixel-based against a fixed content width
-  (`total_days × day_width_px`). This keeps bar positions, grid columns,
-  today marker, and connector arrows aligned no matter the flex context.
+  (`total_days × day_width_px + 2 × axis_pad`, where `axis_pad` is a fixed
+  16px margin on each side that gives edge connectors room — see
+  `axis_pad_px/0`). This keeps bar positions, grid columns, today marker, and
+  connector arrows aligned no matter the flex context.
   """
 
   use Phoenix.Component
@@ -124,27 +126,19 @@ defmodule LiveGantt do
     do: JS.dispatch(js, "lg:scroll-start", to: "##{id}")
 
   @doc """
-  Renders a waterfall/Gantt chart.
+  Renders a Gantt / waterfall chart — horizontal task bars on a time axis with
+  orthogonal dependency connectors, milestones, sub-projects, and a built-in
+  popover.
 
-  ## Attributes
+  Pass a list of `LiveGantt.Task` structs as `events` and a `Date.Range` as
+  `date_range`; everything else is optional. Each attribute below documents its
+  own default and behavior. The smallest useful call:
 
-  - `events` — List of `LiveGantt.Task` structs (one per row)
-  - `date_range` — `Date.Range` for the visible time axis
-  - `zoom` — `:day`, `:week`, or `:month` (default: `:week`)
-  - `connectors` — List of `%{from: id, to: id}` dependency lines (default: [])
-  - `day_markers` — Day markers for non-working day shading (default: [])
-  - `today` — Today's date for the now marker
-  - `row_height` — CSS height per item row (default: "2.5rem")
-  - `label_width` — CSS width for left label column (default: "14rem")
-  - `on_event_click` — Handler for item bar clicks
-  - `show_progress` — Show progress fill on bars (default: true)
-  - `show_today` — Show today marker line (default: true)
-  - `show_connectors` — Show dependency connector lines (default: true)
-  - `avoid_collisions` — Shift connector trunks off intermediate bars (default: true)
-  - `label_background` — `:halo` (default) or `:rect` — how labels mask the line/bars underneath
-  - `translations` — Translation overrides
-  - `class` — Additional CSS classes
-  - `dir` — Text direction (default: `:ltr`)
+      <LiveGantt.gantt events={@tasks} date_range={@range} />
+
+  Note: no stylesheet ships — your app's Tailwind must scan this library as a
+  content source (see the README), and the JS hooks (`priv/static/assets/
+  live_gantt.js`) must be registered for the popover / scroll-to-today.
   """
   attr :events, :list, default: []
   attr :date_range, Date.Range, required: true
@@ -160,12 +154,16 @@ defmodule LiveGantt do
 
   attr :zoom, :atom, default: :week
   attr :connectors, :list, default: []
-  attr :day_markers, :list, default: []
+
+  attr :day_markers, :list,
+    default: [],
+    doc:
+      "Non-working / highlighted day ranges, shaded in the grid. Each is a `%{start_date: Date.t(), end_date: Date.t() | nil, available: boolean()}` (an `end_date` of `nil` means a single day; `available: false` shades it as non-working)."
 
   attr :day_width_px, :integer,
     default: nil,
     doc:
-      "Override the per-zoom pixels-per-day, i.e. the NATURAL content width (`total_days * day_width_px`). This is the scroll `min-width`; the chart is responsive and fills wider containers on its own (horizontal coords are percentages), so use this only to tune density / the scroll threshold. `nil` uses the zoom default."
+      "Override the per-zoom pixels-per-day. The natural content width is `total_days * day_width_px + 2 * axis_pad_px()` (the pad reserves room for edge connectors); that is the scroll `min-width`. The chart is responsive and fills wider containers on its own (horizontal coords are percentages), so use this only to tune density / the scroll threshold. `nil` uses the zoom default."
 
   attr :min_bar_px, :integer,
     default: 0,
@@ -392,6 +390,7 @@ defmodule LiveGantt do
   attr :status_cancelled_class, :string, default: "opacity-40"
   attr :status_pending_approval_class, :string, default: "animate-pulse"
   attr :status_no_show_class, :string, default: nil
+  attr :status_blocked_class, :string, default: "opacity-60 grayscale"
 
   # Bar popover (shown on bar click for every bar — carries the full
   # title, plus an optional second row of custom action buttons when
@@ -541,7 +540,7 @@ defmodule LiveGantt do
   attr :enable_hooks, :boolean,
     default: false,
     doc:
-      "When true, attaches `phx-hook=\"LgAutoScroll\"` on the container so the auto-scroll + today-button behaviour work. Requires the LiveGantt JS bundle to be registered."
+      "When true, attaches BOTH JS hooks: `LgAutoScroll` on the container (auto-scroll + today button) and `LgBarPopover` on every bar/milestone/label (the click popover + dependency-tree highlight). Requires the LiveGantt JS bundle (`priv/static/assets/live_gantt.js`, registered as `window.LiveGanttHooks`). Leave false if you don't ship the bundle — otherwise the browser logs an \"unknown hook\" error per element."
 
   attr :auto_scroll_today, :boolean,
     default: true,
@@ -579,7 +578,11 @@ defmodule LiveGantt do
     {origin, span_days} =
       case {assigns.window_start, assigns.window_end} do
         {%NaiveDateTime{} = ws, %NaiveDateTime{} = we} ->
-          {ws, NaiveDateTime.diff(we, ws, :second) / 86_400}
+          span = NaiveDateTime.diff(we, ws, :second) / 86_400
+          # A non-positive window is meaningless — ignore the override and fall
+          # back to the whole-day range rather than producing a 0/negative axis
+          # (which flags every bar out-of-range and blanks/crashes the chart).
+          if span > 0, do: {ws, span}, else: {range.first, total_days * 1.0}
 
         _ ->
           {range.first, total_days * 1.0}
@@ -594,13 +597,20 @@ defmodule LiveGantt do
     # of "today" or a consumer-supplied `today` highlights nothing.
     granularity = column_zoom_for(day_px, ceil(span_days))
 
+    # A sub-day window (NaiveDateTime origin) MUST build its headers from the
+    # window too, or they disagree with the window-positioned bars. Always take
+    # the window-column path when the origin is intra-day — using the
+    # granularity's slot, or falling back to hourly slots if the column budget
+    # demoted the granularity below sub-day (a wide sub-day window). Only a
+    # whole-day `Date` origin uses the date-range column builders.
     columns =
       case origin do
-        %NaiveDateTime{} when granularity in [:hour, :min15, :min5] ->
-          window_columns(origin, span_days, day_px, slot_minutes(granularity), today)
+        %NaiveDateTime{} ->
+          slot = if granularity in [:hour, :min15, :min5], do: slot_minutes(granularity), else: 60
+          window_columns(origin, span_days, day_px, slot, today, assigns.translations)
 
         _ ->
-          build_columns(range, granularity, day_px, today)
+          build_columns(range, granularity, day_px, today, assigns.translations)
       end
       |> pad_axis_columns()
 
@@ -615,12 +625,15 @@ defmodule LiveGantt do
       |> build_event_tree()
       |> then(&rollup_subproject_dates(assigns.events, &1))
 
-    # Partition events by whether they overlap the visible `date_range`.
-    # Out-of-range events are filtered from rendering entirely (no row, no
-    # bar) but counted for the edge indicators ("← N earlier / N later →")
-    # so the user knows tasks exist outside the current window.
+    # Partition events by whether they overlap the visible POSITIONING window
+    # (`view`), NOT `date_range`. These MUST use the same predicate as
+    # `bar_geometry/4`: an event admitted here but clipped there returns
+    # `%{out_of_range: true}` and the template's `bar.milestone` access crashes
+    # (the bug a sub-day `window_start`/`window_end` reintroduced). Out-of-window
+    # events are filtered from rendering (no row, no bar) but counted for the
+    # edge indicators ("← N earlier / N later →").
     {in_range_events, earlier_count, later_count} =
-      partition_events_by_range(rolled_up_events, range)
+      partition_events_by_range(rolled_up_events, view)
 
     # --- Visibility + retargeting ---
     # Re-build the parent/child tree on the in-range subset (children of
@@ -719,8 +732,7 @@ defmodule LiveGantt do
     # `avoid_collisions` is disabled so large Gantts pay zero cost.
     bar_obstacles =
       if assigns.avoid_collisions,
-        do:
-          compute_bar_obstacles(sorted_events, row_positions, view, day_px, row_px, min_bar_px),
+        do: compute_bar_obstacles(sorted_events, row_positions, view, day_px, row_px, min_bar_px),
         else: []
 
     # Bundle styling defaults so resolve_style/3 can pick the category
@@ -1081,7 +1093,7 @@ defmodule LiveGantt do
                   data-event-id={event.id}
                   data-group={get_group(event)}
                   data-parent-id={parent_id_of(event)}
-                  phx-hook="LgBarPopover"
+                  phx-hook={@enable_hooks && "LgBarPopover"}
                   data-popover-target={label_pop_id}
                 >
                   <.subproject_chevron
@@ -1120,6 +1132,7 @@ defmodule LiveGantt do
                     event.status == :cancelled && @status_cancelled_class,
                     event.status == :pending_approval && @status_pending_approval_class,
                     event.status == :no_show && @status_no_show_class,
+                    event.status == :blocked && @status_blocked_class,
                     event.class
                   ]}>
                     <div
@@ -1245,7 +1258,7 @@ defmodule LiveGantt do
                       style={"left: #{pct(bar.left_px, @content_width)}%; transform: translate(-50%, -50%) rotate(45deg)"}
                       phx-click={@on_event_click}
                       phx-value-event-id={event.id}
-                      phx-hook="LgBarPopover"
+                      phx-hook={@enable_hooks && "LgBarPopover"}
                       data-popover-target={popover_id}
                       data-event-id={event.id}
                       data-group={get_group(event)}
@@ -1265,7 +1278,7 @@ defmodule LiveGantt do
                       style={"left: #{pct(bar.left_px, @content_width)}%; width: #{pct(bar.width_px, @content_width)}%"}
                       phx-click={@on_event_click}
                       phx-value-event-id={event.id}
-                      phx-hook="LgBarPopover"
+                      phx-hook={@enable_hooks && "LgBarPopover"}
                       data-popover-target={popover_id}
                       data-event-id={event.id}
                       data-group={get_group(event)}
@@ -1279,7 +1292,8 @@ defmodule LiveGantt do
                         event.status == :tentative && @status_tentative_class,
                         event.status == :cancelled && @status_cancelled_class,
                         event.status == :pending_approval && @status_pending_approval_class,
-                        event.status == :no_show && @status_no_show_class
+                        event.status == :no_show && @status_no_show_class,
+                        event.status == :blocked && @status_blocked_class
                       ]}>
                       </div>
 
@@ -1339,7 +1353,7 @@ defmodule LiveGantt do
                           event.color || @bar_default_color_class
                         ]}
                         style="left: 0; top: 2px; width: 10px; height: 7px; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 50% 100%)"
-                        phx-hook="LgBarPopover"
+                        phx-hook={@enable_hooks && "LgBarPopover"}
                         data-popover-target={popover_id}
                         data-event-id={event.id}
                         title={event.title}
@@ -1380,67 +1394,68 @@ defmodule LiveGantt do
                        every LiveView diff. The popover's content reflects
                        the initial server render — re-rendering would
                        require remounting (e.g. swapping the bar id). --%>
-                    <div
-                      id={popover_id}
-                      class={["lg-bar-popover", @bar_popover_class]}
-                      style={popover_style(bar, @row_px, @content_width)}
-                      data-popover-for={bar_id}
-                      phx-update="ignore"
-                      role="dialog"
-                      aria-label={"Details for #{event.title}"}
-                    >
-                      <%!-- Colored wrapper: carries the bar's color +
+                  <div
+                    id={popover_id}
+                    class={["lg-bar-popover", @bar_popover_class]}
+                    style={popover_style(bar, @row_px, @content_width)}
+                    data-popover-for={bar_id}
+                    phx-update="ignore"
+                    role="dialog"
+                    aria-label={"Details for #{event.title}"}
+                  >
+                    <%!-- Colored wrapper: carries the bar's color +
                          text + status + custom class so BOTH the title
                          row AND the actions row share the look (and
                          pulse together for `:pending_approval`). One
                          visual block — the popover reads as the bar
                          expanding open. --%>
-                      <div class={[
-                        event.color || @bar_default_color_class,
-                        event.text_color || Safe.infer_text_color(event.color),
-                        event.status == :tentative && @status_tentative_class,
-                        event.status == :cancelled && @status_cancelled_class,
-                        event.status == :pending_approval && @status_pending_approval_class,
-                        event.status == :no_show && @status_no_show_class,
-                        event.class
-                      ]}>
-                        <div
-                          class={[
-                            "lg-bar-popover-title",
-                            event.status == :cancelled && @bar_title_cancelled_class,
-                            @bar_popover_title_class
-                          ]}
-                          style={"min-height: #{@row_px - 8}px"}
-                        >
-                          {event.title || "(No title)"}
-                        </div>
-                        <% subtitle = bar_subtitle(event) %>
-                        <div
-                          :if={subtitle}
-                          class={[
-                            "lg-bar-popover-subtitle",
-                            @bar_popover_subtitle_class
-                          ]}
-                        >
-                          {subtitle}
-                        </div>
-                        <div
-                          :if={actions != []}
-                          class={[
-                            "lg-bar-popover-actions",
-                            @bar_popover_actions_class
-                          ]}
-                        >
-                          <.bar_action_button
-                            :for={action <- actions}
-                            action={action}
-                            event_id={event.id}
-                            class={@bar_action_button_class}
-                            disabled_class={@bar_action_disabled_class}
-                          />
-                        </div>
+                    <div class={[
+                      event.color || @bar_default_color_class,
+                      event.text_color || Safe.infer_text_color(event.color),
+                      event.status == :tentative && @status_tentative_class,
+                      event.status == :cancelled && @status_cancelled_class,
+                      event.status == :pending_approval && @status_pending_approval_class,
+                      event.status == :no_show && @status_no_show_class,
+                      event.status == :blocked && @status_blocked_class,
+                      event.class
+                    ]}>
+                      <div
+                        class={[
+                          "lg-bar-popover-title",
+                          event.status == :cancelled && @bar_title_cancelled_class,
+                          @bar_popover_title_class
+                        ]}
+                        style={"min-height: #{@row_px - 8}px"}
+                      >
+                        {event.title || "(No title)"}
+                      </div>
+                      <% subtitle = bar_subtitle(event) %>
+                      <div
+                        :if={subtitle}
+                        class={[
+                          "lg-bar-popover-subtitle",
+                          @bar_popover_subtitle_class
+                        ]}
+                      >
+                        {subtitle}
+                      </div>
+                      <div
+                        :if={actions != []}
+                        class={[
+                          "lg-bar-popover-actions",
+                          @bar_popover_actions_class
+                        ]}
+                      >
+                        <.bar_action_button
+                          :for={action <- actions}
+                          action={action}
+                          event_id={event.id}
+                          class={@bar_action_button_class}
+                          disabled_class={@bar_action_disabled_class}
+                        />
                       </div>
                     </div>
+                  </div>
                 </div>
               <% end %>
 
@@ -1663,14 +1678,17 @@ defmodule LiveGantt do
   # Per-hour columns (24 per day). The day's date is shown on the 00:00 column,
   # the hour number on the rest. The column matching `now` (when `today` carries
   # a time) is flagged `is_today` so the current hour highlights.
-  defp build_columns(range, :hour, day_px, today) do
+  defp build_columns(range, :hour, day_px, today, tr) do
     hour_px = round(day_px / 24)
     now = if match?(%DateTime{}, today) or match?(%NaiveDateTime{}, today), do: today, else: nil
 
     for date <- range, hour <- 0..23 do
       %{
         label:
-          if(hour == 0, do: "#{I18n.month_name_short(date.month)} #{date.day}", else: "#{hour}"),
+          if(hour == 0,
+            do: "#{I18n.month_name_short(date.month, tr)} #{date.day}",
+            else: "#{hour}"
+          ),
         width_px: hour_px,
         is_today: hour_is_now?(date, hour, now),
         non_working: Date.day_of_week(date) in [6, 7]
@@ -1683,13 +1701,13 @@ defmodule LiveGantt do
   # The day's date sits on the 00:00 slot. `:min5` labels only every third slot
   # (the 15-minute boundaries) so the 5-minute gridlines don't crowd into an
   # unreadable wall of text.
-  defp build_columns(range, :min15, day_px, today),
-    do: sub_hour_columns(range, day_px, today, 15, 1)
+  defp build_columns(range, :min15, day_px, today, tr),
+    do: sub_hour_columns(range, day_px, today, 15, 1, tr)
 
-  defp build_columns(range, :min5, day_px, today),
-    do: sub_hour_columns(range, day_px, today, 5, 3)
+  defp build_columns(range, :min5, day_px, today, tr),
+    do: sub_hour_columns(range, day_px, today, 5, 3, tr)
 
-  defp build_columns(range, :day, day_px, today) do
+  defp build_columns(range, :day, day_px, today, _tr) do
     today_date = to_date(today)
 
     Enum.map(range, fn date ->
@@ -1702,7 +1720,7 @@ defmodule LiveGantt do
     end)
   end
 
-  defp build_columns(range, :week, day_px, today) do
+  defp build_columns(range, :week, day_px, today, tr) do
     today_date = to_date(today)
     dates = Enum.to_list(range)
 
@@ -1713,7 +1731,7 @@ defmodule LiveGantt do
       days_in_chunk = length(chunk)
 
       %{
-        label: week_label(first, days_in_chunk),
+        label: week_label(first, days_in_chunk, tr),
         width_px: days_in_chunk * day_px,
         is_today: today_date in chunk,
         non_working: false
@@ -1721,7 +1739,7 @@ defmodule LiveGantt do
     end)
   end
 
-  defp build_columns(range, :month, day_px, today) do
+  defp build_columns(range, :month, day_px, today, tr) do
     today_date = to_date(today)
     dates = Enum.to_list(range)
 
@@ -1732,7 +1750,7 @@ defmodule LiveGantt do
       days_in_chunk = length(chunk)
 
       %{
-        label: month_label(first),
+        label: month_label(first, tr),
         width_px: days_in_chunk * day_px,
         is_today: today_date in chunk,
         non_working: false
@@ -1740,10 +1758,10 @@ defmodule LiveGantt do
     end)
   end
 
-  defp build_columns(range, _zoom, day_px, today),
-    do: build_columns(range, :week, day_px, today)
+  defp build_columns(range, _zoom, day_px, today, tr),
+    do: build_columns(range, :week, day_px, today, tr)
 
-  defp sub_hour_columns(range, day_px, today, minutes_per_slot, label_every) do
+  defp sub_hour_columns(range, day_px, today, minutes_per_slot, label_every, tr) do
     slots_per_day = div(1440, minutes_per_slot)
     col_px = round(day_px / slots_per_day)
     now = if match?(%DateTime{}, today) or match?(%NaiveDateTime{}, today), do: today, else: nil
@@ -1755,7 +1773,7 @@ defmodule LiveGantt do
 
       label =
         cond do
-          slot == 0 -> "#{I18n.month_name_short(date.month)} #{date.day}"
+          slot == 0 -> "#{I18n.month_name_short(date.month, tr)} #{date.day}"
           rem(slot, label_every) == 0 -> "#{h}:#{pad2(m)}"
           true -> ""
         end
@@ -1784,7 +1802,7 @@ defmodule LiveGantt do
   # `:hour` zoom, and the `:15` clock boundaries on sub-hour zooms (the in-between
   # 5-minute gridlines stay blank). The consumer snaps `window_start` to a slot
   # boundary so these labels land on round times.
-  defp window_columns(%NaiveDateTime{} = origin, span_days, day_px, minutes_per_slot, today) do
+  defp window_columns(%NaiveDateTime{} = origin, span_days, day_px, minutes_per_slot, today, tr) do
     slots_per_day = div(1440, minutes_per_slot)
     col_px = round(day_px / slots_per_day)
     num_slots = max(round(span_days * slots_per_day), 1)
@@ -1798,7 +1816,7 @@ defmodule LiveGantt do
       label =
         cond do
           minute_of_day == 0 ->
-            "#{I18n.month_name_short(date.month)} #{date.day}"
+            "#{I18n.month_name_short(date.month, tr)} #{date.day}"
 
           minutes_per_slot == 60 ->
             "#{slot_dt.hour}"
@@ -1827,6 +1845,17 @@ defmodule LiveGantt do
   """
   @spec default_day_width_px(atom()) :: pos_integer()
   def default_day_width_px(zoom), do: day_width_px(zoom)
+
+  @doc """
+  The fixed horizontal margin (px) reserved on EACH side of the time axis so a
+  connector exiting/entering a task at the very edge of the window has room to
+  draw instead of clipping. The natural content width is
+  `total_days × day_width_px + 2 × axis_pad_px()`. A consumer computing a
+  fit-to-width `day_width_px` from a measured viewport should subtract
+  `2 × axis_pad_px()` first.
+  """
+  @spec axis_pad_px() :: non_neg_integer()
+  def axis_pad_px, do: @axis_pad_px
 
   # `:hour` zoom makes a day 720px wide (24 × 30px/hour) so intra-day bars and
   # per-hour columns are legible. The wide content scrolls. `:min15` is sized so
@@ -1882,17 +1911,17 @@ defmodule LiveGantt do
   defp column_count(:week, days), do: ceil(days / 7)
   defp column_count(:month, days), do: ceil(days / 30)
 
-  defp week_label(first_day, days_count) do
+  defp week_label(first_day, days_count, tr) do
     if days_count >= 5 do
       {_year, week} = :calendar.iso_week_number(Date.to_erl(first_day))
       "W#{week}"
     else
-      "#{I18n.month_name_short(first_day.month)} #{first_day.day}"
+      "#{I18n.month_name_short(first_day.month, tr)} #{first_day.day}"
     end
   end
 
-  defp month_label(date) do
-    "#{I18n.month_name_short(date.month)} #{date.year}"
+  defp month_label(date, tr) do
+    "#{I18n.month_name_short(date.month, tr)} #{date.year}"
   end
 
   # -- Row position pre-computation --
@@ -1961,10 +1990,10 @@ defmodule LiveGantt do
   # Horizontal coordinates render as PERCENTAGES of the content width, not
   # pixels — so the timeline is responsive: it fills the container when the
   # natural content (`total_days * day_px`, kept as the scroll `min-width`) is
-  # narrower, and scrolls when wider, with zero JS. Since `px = frac * day_px`
-  # and `content_width = total_days * day_px`, `px / content_width` is exactly
-  # `frac / total_days` — so every existing px coordinate converts by a single
-  # divide, leaving all the geometry/routing math untouched.
+  # narrower, and scrolls when wider, with zero JS. Every px coordinate (shifted
+  # right by `@axis_pad_px`) and `content_width` (`total_days * day_px + 2 *
+  # @axis_pad_px`) share the same scale, so a single divide converts to a percent
+  # and bars, columns, and connectors all stay aligned regardless of the pad.
   defp pct(_px, content_width) when content_width in [0, nil], do: 0.0
   defp pct(px, content_width), do: Float.round(px / content_width * 100, 4)
 
@@ -3019,6 +3048,7 @@ defmodule LiveGantt do
         route.exclude_ids,
         ctx
       )
+      |> enforce_milestone_approach(arrow_stop, route.target_entry, milestone?(geom.to_event))
 
     d = PathFormat.forward(x1, y1, mid_x, y2, arrow_stop)
 
@@ -3034,6 +3064,21 @@ defmodule LiveGantt do
     {label_x, label_y, label_transform} = place_label(segment, route, ctx)
     {d, label_x, label_y, label_transform}
   end
+
+  # A milestone target's arrowhead is nudged @milestone_edge_px out along the
+  # final approach segment (the last `H arrow_stop` leg), so that leg must be at
+  # least that long (+2px margin) or the fixed-px head lands off the shaft at a
+  # low fill factor. Push the trunk away from the target on the entry side. This
+  # is the forward-path twin of `build_fs_detour_path`'s `base_entry` floor; it
+  # covers all four dep types (entry is :west for FS/SS, :east for FF/SF) and any
+  # `fanin`/`fanout` preference that would otherwise hug the target.
+  defp enforce_milestone_approach(mid, _arrow_stop, _entry, false), do: mid
+
+  defp enforce_milestone_approach(mid, arrow_stop, :west, true),
+    do: min(mid, arrow_stop - (@milestone_edge_px + 2))
+
+  defp enforce_milestone_approach(mid, arrow_stop, :east, true),
+    do: max(mid, arrow_stop + (@milestone_edge_px + 2))
 
   defp choose_mid_x(x1, arrow_stop, :east, :west, fanout, fanin, _label_w, elbow) do
     # FS — stems point at each other; trunk lives BETWEEN them.
@@ -3530,27 +3575,37 @@ defmodule LiveGantt do
   # placement — an arrow crossing a bar is better than a broken shape.
 
   defp compute_bar_obstacles(sorted_events, row_positions, view, day_px, row_px, min_bar_px) do
-    Enum.map(sorted_events, fn event ->
+    sorted_events
+    |> Enum.flat_map(fn event ->
       pos = Map.get(row_positions.positions, event.id)
       bar = bar_geometry(event, view, day_px, min_bar_px)
 
-      # Milestone diamonds are ~16px rotated 45° — use a symmetric 11px
-      # half-width hit box around their center (which equals bar.left_px
-      # since width_px == 0 for milestones).
-      {x_left, x_right} =
-        if bar.milestone do
-          {bar.left_px - 11, bar.left_px + 11}
-        else
-          {bar.left_px, bar.left_px + bar.width_px}
-        end
+      # Defensive: an out-of-window bar has no left_px/width_px/milestone keys.
+      # Partition already filters these out (it shares `view` with bar_geometry),
+      # so this only guards against a future divergence — skip rather than crash.
+      if bar[:out_of_range] do
+        []
+      else
+        # Milestone diamonds are ~16px rotated 45° — use a symmetric 11px
+        # half-width hit box around their center (which equals bar.left_px
+        # since width_px == 0 for milestones).
+        {x_left, x_right} =
+          if bar.milestone do
+            {bar.left_px - 11, bar.left_px + 11}
+          else
+            {bar.left_px, bar.left_px + bar.width_px}
+          end
 
-      %{
-        event_id: event.id,
-        y_top: pos.top + 1,
-        y_bottom: pos.top + row_px - 1,
-        x_left: x_left,
-        x_right: x_right
-      }
+        [
+          %{
+            event_id: event.id,
+            y_top: pos.top + 1,
+            y_bottom: pos.top + row_px - 1,
+            x_left: x_left,
+            x_right: x_right
+          }
+        ]
+      end
     end)
   end
 
@@ -4085,9 +4140,7 @@ defmodule LiveGantt do
     end
   end
 
-  defp partition_events_by_range(events, range) do
-    total_days = Date.diff(range.last, range.first) + 1
-
+  defp partition_events_by_range(events, {origin, span_days} = _view) do
     Enum.reduce(events, {[], 0, 0}, fn event, {in_range, earlier, later} ->
       cond do
         # Drop events missing a start date entirely — without it there
@@ -4097,19 +4150,17 @@ defmodule LiveGantt do
           {in_range, earlier, later}
 
         true ->
-          # Use the SAME fractional-day overlap that `bar_geometry/4` uses, so
-          # partition and bar rendering agree on what's visible. The old
-          # date-truncated, half-open test dropped a task ending part-way through
-          # `range.first`'s day (e.g. a 25th→26th task viewed from the 26th):
-          # `to_date(end)` collapsed it to the 26th and `end <= range.first`
-          # excluded it, yet its bar clearly extends into the window. Fractional
-          # days keep it (and the bar clips it to the window's left edge).
-          fs = frac_days(event.start, range.first)
-          fe = frac_days(LiveGantt.Task.effective_end(event), range.first)
+          # Use the SAME fractional-day overlap (and the SAME origin/span) that
+          # `bar_geometry/4` uses, so partition and bar rendering agree on what's
+          # visible. They MUST: an event admitted here but clipped by
+          # `bar_geometry` returns `%{out_of_range: true}` and the template
+          # crashes on `bar.milestone`.
+          fs = frac_days(event.start, origin)
+          fe = frac_days(LiveGantt.Task.effective_end(event), origin)
           is_milestone = fe - fs <= 0
 
           cond do
-            not out_of_range_frac?(fs, fe, is_milestone, total_days) ->
+            not out_of_range_frac?(fs, fe, is_milestone, span_days) ->
               {[event | in_range], earlier, later}
 
             fs < 0 ->
@@ -4269,9 +4320,14 @@ defmodule LiveGantt do
 
   # -- Progress --
 
+  # Struct field wins; `extra.progress_pct` is the fallback for consumers that
+  # carry their data in `extra`. The struct default is `nil`, so an unset field
+  # transparently defers to `extra`.
+  defp progress_pct(%LiveGantt.Task{progress_pct: pct}) when is_number(pct), do: pct
   defp progress_pct(%LiveGantt.Task{extra: %{progress_pct: pct}}) when is_number(pct), do: pct
   defp progress_pct(_), do: 0
 
+  defp assignee(%LiveGantt.Task{assignee: a}) when is_binary(a), do: a
   defp assignee(%LiveGantt.Task{extra: %{assignee: a}}) when is_binary(a), do: a
   defp assignee(_), do: nil
 
@@ -4472,20 +4528,29 @@ defmodule LiveGantt do
   defp rolled_up_range([]), do: nil
 
   defp rolled_up_range(events) do
-    starts =
-      events
-      |> Enum.map(&to_date(&1.start))
-      |> Enum.reject(&is_nil/1)
+    # Roll up in the children's NATIVE temporal type — do NOT truncate to dates.
+    # Truncating collapsed a parent of sub-day children (e.g. 10:00–14:00) to
+    # start == end on one date, which `bar_geometry/4` then drew as a midnight
+    # milestone diamond while the children sat at their real hours. Comparing via
+    # `to_naive_dt/1` keeps mixed Date/NaiveDateTime/DateTime children orderable
+    # while returning the original (untruncated) endpoints.
+    starts = events |> Enum.map(& &1.start) |> Enum.reject(&is_nil/1)
 
     ends =
       events
-      |> Enum.map(&to_date(LiveGantt.Task.effective_end(&1)))
+      |> Enum.map(&LiveGantt.Task.effective_end/1)
       |> Enum.reject(&is_nil/1)
 
     case {starts, ends} do
-      {[], _} -> nil
-      {_, []} -> nil
-      {ss, es} -> {Enum.min(ss, Date), Enum.max(es, Date)}
+      {[], _} ->
+        nil
+
+      {_, []} ->
+        nil
+
+      {ss, es} ->
+        {Enum.min_by(ss, &to_naive_dt/1, NaiveDateTime),
+         Enum.max_by(es, &to_naive_dt/1, NaiveDateTime)}
     end
   end
 
@@ -4726,8 +4791,6 @@ defmodule LiveGantt do
     do: "left: calc(#{pct(anchor_px, content_width)}% + #{offset_px}px)"
 
   # Milestones have width 0 — render right-of-center.
-  defp bar_right_px(%{width: 0, left: l}), do: l
-  defp bar_right_px(%{right: r}), do: r
   defp bar_right_px(%{left_px: l, width_px: w}), do: l + w
   defp bar_right_px(%{left_px: l}), do: l
 
@@ -4997,6 +5060,18 @@ defmodule LiveGantt do
 
   # -- Today marker helpers --
 
+  # A bare `Date` today has no time-of-day, so it represents the whole DAY: it's
+  # in range when that day OVERLAPS the window, not just when its midnight does.
+  # This matters under a sub-day `window_start` (a NaiveDateTime origin), where a
+  # Date today's midnight sits before the intra-day origin (`fd < 0`) even though
+  # the day's hours fill the window — without this the today line hides and a
+  # spurious "← Today" edge pill renders. A precise NaiveDateTime/DateTime today
+  # is a single instant, so the point test is correct for it.
+  defp today_in_range?(%Date{} = today, {origin, span_days}) do
+    fd = frac_days(today, origin)
+    fd > -1 and fd < span_days
+  end
+
   defp today_in_range?(today, {origin, span_days}) do
     fd = frac_days(today, origin)
     fd >= 0 and fd < span_days
@@ -5004,7 +5079,17 @@ defmodule LiveGantt do
 
   # Which edge today sits past, or nil when it's on-screen. Drives the
   # off-screen "Today" directional hint (so the axis needn't stretch to reach
-  # a far-away today).
+  # a far-away today). Mirrors `today_in_range?`'s Date-is-a-whole-day rule.
+  defp today_offscreen_side(%Date{} = today, {origin, span_days}) do
+    fd = frac_days(today, origin)
+
+    cond do
+      fd <= -1 -> :before
+      fd >= span_days -> :after
+      true -> nil
+    end
+  end
+
   defp today_offscreen_side(today, {origin, span_days}) do
     fd = frac_days(today, origin)
 

@@ -23,89 +23,6 @@ standalone package.
   `LiveGantt.TestHelpers` for property assertions.
 - `mix live_gantt.dump` for offline geometry inspection.
 - JS hooks `LgBarPopover` + `LgAutoScroll`.
-
-### Fixes
-
-- Connectors to/from a task at the very edge of the window no longer clip off the
-  chart. A task flush against the left/right edge had no room for its connector's
-  exit/entry stub (it bulges ~`@elbow_px` past the bar), so the stub — and
-  sometimes the arrowhead — drew past `content_width` and got clipped by the
-  chart's `overflow-x-auto`. The time axis now reserves a fixed `@axis_pad_px`
-  (16px) of horizontal breathing room on each side: every x coordinate shifts in
-  by the pad, `content_width` grows by 2×, and transparent spacer columns hold
-  the margin so bars still exactly cover their time columns. (Absolute %s move,
-  but every layer shares the padded denominator, so alignment is unchanged.)
-- Arrowheads into a milestone no longer detach from the shaft at a low fill
-  factor. The head is nudged `@milestone_edge_px` (12px) out to the diamond's
-  edge — a fixed SCREEN px — but it rides the connector's final approach segment,
-  which was only `@elbow_px` (10px) of VIEWBOX. When the chart scrolls rather
-  than fills (e.g. `:min5`, where that segment renders ~1:1), 12px of nudge
-  overshot the 10px segment and the head floated off the trunk, disconnected. A
-  milestone target now gets an approach stem a hair longer than the nudge
-  (`@milestone_edge_px + 2`), so the head always lands ON the shaft at every
-  zoom. (Connectors are still the normal horizontal zigzag — longer at a high
-  fill is fine.)
-- An open bar/label popover now sits above everything else in the chart
-  (`z-[60]`). It was `z-40` — tying with milestone diamonds — and since rows are
-  `position: relative` with no z-index (one shared stacking context), a popover
-  that overhung the row below lost to that row's diamond by DOM paint order and
-  got clipped. Clicking a milestone in a stack of same-date diamonds now shows an
-  un-occluded popover. (Above bars z-10, today line z-30, diamonds z-40, and
-  badges z-50.)
-- Milestone diamonds are now clickable. They rendered with `cursor-pointer`
-  (the default `milestone_class`) but carried no popover wiring — only the
-  optional `on_event_click` — so a consumer that relied on the built-in popover
-  (as bars do) got a diamond that looked clickable but did nothing. Diamonds now
-  get the same `LgBarPopover` hook + popover sibling as bars, so clicking one
-  opens its title/actions popover AND highlights its dependency tree (fading
-  unrelated tasks) — the tool for tracing arrows through a cluster of
-  same-date milestones. (The dependency highlight walks ancestors only, by
-  design; an inline comment claiming it walked "both directions" was stale and
-  has been corrected.)
-- Column-header "today" highlight now honors the `today` attribute instead
-  of always computing against `Date.utc_today()`, so it agrees with the
-  today-marker line when a consumer passes an explicit `today`.
-- The built-in toolbar's **Today** button is now disabled (with an
-  explanatory tooltip) when it can't actually scroll — i.e. `enable_hooks`
-  is off and no `on_scroll_today` is wired — instead of rendering enabled
-  and silently doing nothing. (Default scroll-to-today needs `id` +
-  `enable_hooks` so the `LgAutoScroll` hook has a target + listener.)
-- Popover action buttons now always expose the event id as
-  `phx-value-event-id` (hyphen), even when the action sets a `phx_value`
-  map — previously a map made it `phx-value-event_id` (underscore),
-  disagreeing with the no-value path and the chevron. Handlers now read
-  `%{"event-id" => id}` consistently.
-- `LgBarPopover` re-anchors a bar popover to the bar's CURRENT geometry on
-  open, instead of trusting its (frozen, `phx-update="ignore"`) server-
-  rendered position. Fixes popovers opening far from their bar after the
-  chart re-rendered with new geometry — e.g. switching zoom.
-- Connector arrowheads no longer distort under the responsive fill. They were
-  SVG `<marker>`s inside the `preserveAspectRatio="none"` shaft SVG, so at high
-  fill factors they stretched into thin, disconnected-looking triangles. They
-  now render in a fixed-px overlay anchored by `%` to the shaft's true terminal
-  point (`LiveGantt.PathFormat.terminal/1`), so the head stays on the shaft end
-  even when `consolidate_piercing_trunks` re-routes a forward path to end at a
-  different y (the old marker rode the path, the overlay must re-derive it).
-  New `Inspector` arrowhead extraction + `TestHelpers.assert_arrowheads_at_path_ends/2`
-  (wired into `find_geometry_issues/2`) lock the head-meets-shaft invariant.
-- Sub-day tasks are no longer mis-routed as milestones. `milestone?/1` (connector
-  routing) tested `Date.diff(end, start) <= 0`, so any task shorter than a full
-  day — common at `:hour` zoom — started and ended on the same DATE and was
-  treated as a zero-duration milestone, even though `bar_geometry/3` (which uses
-  fractional days) rendered it as a thin bar. The router then applied milestone
-  endpoint offsets + the 10px diamond gap and frequently mis-flagged the
-  dependency as backward (dashed), so arrows routed to/from a phantom diamond and
-  looked disconnected. `milestone?/1` now uses the same fractional-day duration
-  test as `bar_geometry/3` (identical to the old behavior for pure-`Date` events).
-- Arrow tips now land ON the target bar's edge (gap 0) instead of a 4px natural
-  gap. Under the responsive fill the shaft SVG stretches with the bars, so a
-  natural-px gap was magnified into a visible disconnect (4px → ~15px at a 3.8×
-  fill); the fixed-px arrowhead overlay now supplies the visual separation, so
-  arrows read as connected at any fill factor. (Milestone targets keep their
-  diamond-clearance gap.)
-
-### Features
-
 - **`LiveGantt.scroll_to_start/2` — scroll the timeline back to its start.** A
   `Phoenix.LiveView.JS` command (composes with `JS.push/2`) that the
   `LgAutoScroll` hook consumes (`lg:scroll-start`) to scroll the chart to its
@@ -189,6 +106,87 @@ standalone package.
   marker on screen. Optional `on_show_today` makes it clickable (e.g. to jump
   to today); otherwise it's informational. The vertical marker line still
   renders only when today is in range.
+
+### Fixes
+
+- Connectors to/from a task at the very edge of the window no longer clip off the
+  chart. A task flush against the left/right edge had no room for its connector's
+  exit/entry stub (it bulges ~`@elbow_px` past the bar), so the stub — and
+  sometimes the arrowhead — drew past `content_width` and got clipped by the
+  chart's `overflow-x-auto`. The time axis now reserves a fixed `@axis_pad_px`
+  (16px) of horizontal breathing room on each side: every x coordinate shifts in
+  by the pad, `content_width` grows by 2×, and transparent spacer columns hold
+  the margin so bars still exactly cover their time columns. (Absolute %s move,
+  but every layer shares the padded denominator, so alignment is unchanged.)
+- Arrowheads into a milestone no longer detach from the shaft at a low fill
+  factor. The head is nudged `@milestone_edge_px` (12px) out to the diamond's
+  edge — a fixed SCREEN px — but it rides the connector's final approach segment,
+  which was only `@elbow_px` (10px) of VIEWBOX. When the chart scrolls rather
+  than fills (e.g. `:min5`, where that segment renders ~1:1), 12px of nudge
+  overshot the 10px segment and the head floated off the trunk, disconnected. A
+  milestone target now gets an approach stem a hair longer than the nudge
+  (`@milestone_edge_px + 2`), so the head always lands ON the shaft at every
+  zoom. (Connectors are still the normal horizontal zigzag — longer at a high
+  fill is fine.)
+- An open bar/label popover now sits above everything else in the chart
+  (`z-[60]`). It was `z-40` — tying with milestone diamonds — and since rows are
+  `position: relative` with no z-index (one shared stacking context), a popover
+  that overhung the row below lost to that row's diamond by DOM paint order and
+  got clipped. Clicking a milestone in a stack of same-date diamonds now shows an
+  un-occluded popover. (Above bars z-10, today line z-30, diamonds z-40, and
+  badges z-50.)
+- Milestone diamonds are now clickable. They rendered with `cursor-pointer`
+  (the default `milestone_class`) but carried no popover wiring — only the
+  optional `on_event_click` — so a consumer that relied on the built-in popover
+  (as bars do) got a diamond that looked clickable but did nothing. Diamonds now
+  get the same `LgBarPopover` hook + popover sibling as bars, so clicking one
+  opens its title/actions popover AND highlights its dependency tree (fading
+  unrelated tasks) — the tool for tracing arrows through a cluster of
+  same-date milestones. (The dependency highlight walks ancestors only, by
+  design; an inline comment claiming it walked "both directions" was stale and
+  has been corrected.)
+- Column-header "today" highlight now honors the `today` attribute instead
+  of always computing against `Date.utc_today()`, so it agrees with the
+  today-marker line when a consumer passes an explicit `today`.
+- The built-in toolbar's **Today** button is now disabled (with an
+  explanatory tooltip) when it can't actually scroll — i.e. `enable_hooks`
+  is off and no `on_scroll_today` is wired — instead of rendering enabled
+  and silently doing nothing. (Default scroll-to-today needs `id` +
+  `enable_hooks` so the `LgAutoScroll` hook has a target + listener.)
+- Popover action buttons now always expose the event id as
+  `phx-value-event-id` (hyphen), even when the action sets a `phx_value`
+  map — previously a map made it `phx-value-event_id` (underscore),
+  disagreeing with the no-value path and the chevron. Handlers now read
+  `%{"event-id" => id}` consistently.
+- `LgBarPopover` re-anchors a bar popover to the bar's CURRENT geometry on
+  open, instead of trusting its (frozen, `phx-update="ignore"`) server-
+  rendered position. Fixes popovers opening far from their bar after the
+  chart re-rendered with new geometry — e.g. switching zoom.
+- Connector arrowheads no longer distort under the responsive fill. They were
+  SVG `<marker>`s inside the `preserveAspectRatio="none"` shaft SVG, so at high
+  fill factors they stretched into thin, disconnected-looking triangles. They
+  now render in a fixed-px overlay anchored by `%` to the shaft's true terminal
+  point (`LiveGantt.PathFormat.terminal/1`), so the head stays on the shaft end
+  even when `consolidate_piercing_trunks` re-routes a forward path to end at a
+  different y (the old marker rode the path, the overlay must re-derive it).
+  New `Inspector` arrowhead extraction + `TestHelpers.assert_arrowheads_at_path_ends/2`
+  (wired into `find_geometry_issues/2`) lock the head-meets-shaft invariant.
+- Sub-day tasks are no longer mis-routed as milestones. `milestone?/1` (connector
+  routing) tested `Date.diff(end, start) <= 0`, so any task shorter than a full
+  day — common at `:hour` zoom — started and ended on the same DATE and was
+  treated as a zero-duration milestone, even though `bar_geometry/3` (which uses
+  fractional days) rendered it as a thin bar. The router then applied milestone
+  endpoint offsets + the 10px diamond gap and frequently mis-flagged the
+  dependency as backward (dashed), so arrows routed to/from a phantom diamond and
+  looked disconnected. `milestone?/1` now uses the same fractional-day duration
+  test as `bar_geometry/3` (identical to the old behavior for pure-`Date` events).
+- Arrow tips now land ON the target bar's edge (gap 0) instead of a 4px natural
+  gap. Under the responsive fill the shaft SVG stretches with the bars, so a
+  natural-px gap was magnified into a visible disconnect (4px → ~15px at a 3.8×
+  fill); the fixed-px arrowhead overlay now supplies the visual separation, so
+  arrows read as connected at any fill factor. (Milestone targets keep their
+  diamond-clearance gap.)
+
 
 ### Ergonomics & docs
 

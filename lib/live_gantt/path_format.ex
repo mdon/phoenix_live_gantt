@@ -1,8 +1,8 @@
 defmodule LiveGantt.PathFormat do
   @moduledoc """
-  Single source of truth for the Waterfall connector path string format.
+  Single source of truth for the LiveGantt connector path string format.
 
-  Waterfall paths come in two shape families:
+  Connector paths come in two shape families:
 
       :forward  — "M x1 y1 H mid V y2 H arrow_stop"
                   3 segments. Used by FS / SS / FF / SF when there's room
@@ -13,8 +13,8 @@ defmodule LiveGantt.PathFormat do
                   laid out cleanly (target before source, tight gap, or
                   trunk would pierce intermediate bars).
 
-  Owning both the BUILDER and the PARSER here keeps `Waterfall` (which
-  emits paths) and `Waterfall.Inspector` (which parses them for tests
+  Owning both the BUILDER and the PARSER here keeps `LiveGantt` (which
+  emits paths) and `LiveGantt.Inspector` (which parses them for tests
   and the dump task) in sync — if a new shape family is added or the
   format changes, both update at once.
 
@@ -22,7 +22,7 @@ defmodule LiveGantt.PathFormat do
   by the renderer today; if that ever changes, extend `parse/1`.
   """
 
-  # ---- Builders (used by Waterfall renderer) ----
+  # ---- Builders (used by the LiveGantt renderer) ----
 
   @doc """
   Build the 3-segment forward path string.

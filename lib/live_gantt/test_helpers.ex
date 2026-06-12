@@ -1,6 +1,6 @@
 defmodule LiveGantt.TestHelpers do
   @moduledoc """
-  Render, inspect, and assert helpers for the Waterfall view. Replaces
+  Render, inspect, and assert helpers for the LiveGantt view. Replaces
   ad-hoc probe scripts with a one-line call. Used from tests, IEx, and
   the `mix live_gantt.dump` task.
 
@@ -35,11 +35,11 @@ defmodule LiveGantt.TestHelpers do
   alias LiveGantt.PathFormat
 
   @doc """
-  Render the Waterfall component with the given events and options.
+  Render the LiveGantt component with the given events and options.
   All component attrs default to their declared defaults; opts override.
   Returns the rendered HTML string.
   """
-  @spec render_waterfall([Event.t()], keyword()) :: String.t()
+  @spec render_waterfall([LiveGantt.Task.t()], keyword()) :: String.t()
   def render_waterfall(events, opts \\ []) do
     range = Keyword.get(opts, :date_range) || derive_range(events)
 
@@ -54,7 +54,7 @@ defmodule LiveGantt.TestHelpers do
   end
 
   @doc "Render then immediately inspect into a structured geometry map."
-  @spec inspect_waterfall([Event.t()], keyword()) :: map()
+  @spec inspect_waterfall([LiveGantt.Task.t()], keyword()) :: map()
   def inspect_waterfall(events, opts \\ []) do
     events |> render_waterfall(opts) |> Inspector.inspect_html()
   end
@@ -63,7 +63,7 @@ defmodule LiveGantt.TestHelpers do
   Render, inspect, and pretty-print to stdout. Returns the geometry map
   for further inspection.
   """
-  @spec dump_waterfall([Event.t()], keyword()) :: map()
+  @spec dump_waterfall([LiveGantt.Task.t()], keyword()) :: map()
   def dump_waterfall(events, opts \\ []) do
     geom = inspect_waterfall(events, opts)
     print_geometry(geom)
@@ -212,7 +212,7 @@ defmodule LiveGantt.TestHelpers do
   headers shift the row stride.
 
   `:corner_inset_px` (default 4) — px to inset from bar's top/bottom
-  for the rounded-corner area. Defaults match the Waterfall's
+  for the rounded-corner area. Defaults match LiveGantt's
   `bus_stagger_corner_clearance_px`.
   """
   def assert_source_attaches_inside_bar(html, opts \\ []) do
@@ -451,8 +451,8 @@ defmodule LiveGantt.TestHelpers do
   defp path_coords(_), do: []
 
   @doc """
-  Assert that every detour path satisfies the geometric invariants the
-  Waterfall's stem-shifting logic relies on:
+  Assert that every detour path satisfies the geometric invariants
+  LiveGantt's stem-shifting logic relies on:
 
     * `stem_out > x1` — source-side stem must be strictly east of the
       source bar's reference x (FS shape requirement).

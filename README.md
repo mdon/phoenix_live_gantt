@@ -128,14 +128,18 @@ being exclusive trips people up:
 - **Milestones.** When `end <= start` (zero duration) the task renders as a
   diamond instead of a bar. A `nil`-`end` task with **no children** is a
   milestone too.
-- **Minimum width.** Single-day bars are clamped to 4px so they stay visible
-  at `:month` zoom.
-- **Out-of-range events are dropped, not clipped.** A task entirely outside
-  `date_range` isn't rendered; instead it's counted into the
+- **Bar width is honest by default** (`min_bar_px: 0`): a bar is exactly as wide
+  as its duration, so a task too short to see at the current zoom is a hairline
+  (and gets a "too small to see" marker — see `tiny_bar_px`). Set `min_bar_px` to
+  e.g. `4` to floor every bar to a visible sliver.
+- **Out-of-range events are dropped, not clipped.** A task entirely outside the
+  visible window isn't rendered; instead it's counted into the
   "← N earlier / N later →" edge indicators. Wire `on_show_earlier` /
   `on_show_later` to let users widen the range.
-- **Zoom** (`:day` / `:week` / `:month`) only changes column grouping and
-  pixels-per-day; it never changes which events are in range.
+- **Zoom** (`:min5` / `:min15` / `:hour` / `:day` / `:week` / `:month`) only
+  changes column grouping and pixels-per-day; it never changes which events are
+  in range. The sub-day zooms render intra-day detail from `DateTime` /
+  `NaiveDateTime` starts.
 
 ## Sub-projects (hierarchy + roll-up)
 
@@ -267,6 +271,32 @@ consumer:
 - **`on_toggle_expand` param is `"event-id"`** (hyphen), not `"event_id"`.
 - **`id` is required** with `show_header` / auto-scroll, and whenever two
   charts share a page (ids + JS dispatches are namespaced by it).
+- **The JS bundle is effectively required.** The `LgBarPopover` /
+  `LgAutoScroll` hooks ship in `priv/static/assets/live_gantt.js` (registered as
+  `window.LiveGanttHooks`). `enable_hooks` (default `false`) gates BOTH hooks; if
+  you turn it on without registering the bundle you'll get "unknown hook"
+  console errors. The popover and scroll-to-today need it.
+- **Sub-project chevrons use heroicons** (`hero-plus-mini` / `hero-minus-mini`).
+  Those classes exist only if your app has the heroicons Tailwind plugin
+  (the default in Phoenix ≥ 1.7, but not universal). No plugin → no chevron glyph.
+- **`dir="rtl"` sets the attribute but the geometry is LTR-only** — bars, the
+  time axis, and connectors still run left-to-right. RTL text in labels renders
+  fine; the chart layout does not mirror.
+
+## Large charts
+
+Horizontal geometry is pure CSS (percent positions, no measurement), so wide
+timelines are cheap. The cost is the connector router: collision avoidance is
+roughly O(tasks) per connector, and a chart re-renders/serializes its full HTML
+over the LiveView socket. A few hundred tasks with dependencies at a fine zoom
+produces multi-MB diffs and second-scale re-renders. To keep big charts snappy:
+
+- Set `avoid_collisions: false` (component attr, or per-connector) to skip the
+  obstacle pass — connectors may cross unrelated bars but routing is much cheaper.
+- Narrow `date_range` (or pass a `window_start`/`window_end`) so only the
+  relevant slice renders; out-of-range tasks become cheap edge-indicator counts.
+- Prefer coarser zooms (`:week` / `:month`) for overview; reserve `:day` and the
+  sub-day zooms for focused windows.
 
 ## Status
 

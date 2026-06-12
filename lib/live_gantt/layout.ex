@@ -64,7 +64,10 @@ defmodule LiveGantt.Layout do
 
   `end` is exclusive, matching `LiveGantt.gantt/1` (a one-day bar is
   `start..start+1`). Every id in `items` appears in the result, including
-  sub-project parents (sized to span their children).
+  sub-project parents (sized to span their children). Items whose `parent_id`
+  forms a cycle, points at themselves, or nests past the internal depth cap are
+  laid out flat after the main chain rather than dropped — so `result[id]` is
+  always safe.
 
   ## Options
 
@@ -116,7 +119,16 @@ defmodule LiveGantt.Layout do
       min_span: min_span
     }
 
-    {spans, _cursor} = walk(Map.get(children, :__root__, []), start, ctx, 0, %{})
+    {spans, cursor} = walk(Map.get(children, :__root__, []), start, ctx, 0, %{})
+
+    # Honor the "every id appears" contract: any item the tree walk never reached
+    # — a `parent_id` cycle (a→b→a), a self-parent, or nesting past `@max_depth`
+    # — would otherwise be silently dropped, and the consumer's `layout[id]`
+    # MatchErrors far from the cause. Lay those out flat (no recursion), in order,
+    # appended after the main chain. Passing `depth: @max_depth` disables the
+    # sub-tree descent so a cycle can't re-trigger the same drop.
+    missing = Enum.reject(items, &Map.has_key?(spans, id_fun.(&1)))
+    {spans, _cursor} = walk(missing, cursor, ctx, @max_depth, spans)
     spans
   end
 

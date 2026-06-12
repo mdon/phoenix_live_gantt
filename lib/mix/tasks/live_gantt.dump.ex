@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.LiveGantt.Dump do
-  @shortdoc "Dump structured geometry for a Waterfall fixture (debug aid)"
+  @shortdoc "Dump structured geometry for a LiveGantt fixture (debug aid)"
 
   @moduledoc """
-  Render a named Waterfall fixture and pretty-print its geometry to
+  Render a named LiveGantt fixture and pretty-print its geometry to
   stdout. Use this to debug "what does this chart actually look like?"
   without running the dev server.
 
@@ -636,7 +636,7 @@ defmodule Mix.Tasks.LiveGantt.Dump do
     Mix.shell().info("""
 
     ╔══════════════════════════════════════════════════
-    ║ Waterfall fixture: #{name}
+    ║ LiveGantt fixture: #{name}
     ║ zoom=#{zoom}  stagger=#{stagger}  range=#{range.first}..#{range.last}
     ║ expanded=#{format_expanded(expanded)}
     ╚══════════════════════════════════════════════════
@@ -715,7 +715,7 @@ defmodule Mix.Tasks.LiveGantt.Dump do
 
   # Render via the component-call syntax so attr defaults are injected
   # by Phoenix.Component's macro. Without this we'd have to maintain a
-  # full default-assigns map matching every Waterfall attr.
+  # full default-assigns map matching every LiveGantt attr.
   defp render(attrs) do
     assigns = %{attrs: attrs}
 

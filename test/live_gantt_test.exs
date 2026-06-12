@@ -92,6 +92,29 @@ defmodule LiveGanttTest do
       assert html =~ "width: 60%"
     end
 
+    test "reads progress_pct + assignee from struct fields (not just extra)" do
+      # The README quickstart sets these as struct fields; the renderer must read
+      # them struct-first (with extra.* as the fallback).
+      events = [
+        %LiveGantt.Task{
+          id: "t1",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-10],
+          title: "Struct fields",
+          color: "bg-primary",
+          progress_pct: 60,
+          assignee: "Sara"
+        }
+      ]
+
+      assigns = %{events: events, range: sample_range()}
+
+      html = render(~H"<.gantt events={@events} date_range={@range} />")
+
+      assert html =~ "width: 60%"
+      assert html =~ "Sara"
+    end
+
     test "renders milestones for zero-duration events" do
       events = [
         %LiveGantt.Task{
@@ -1328,6 +1351,112 @@ defmodule LiveGanttTest do
     end
   end
 
+  describe "window_start/window_end (sub-day positioning window)" do
+    # A sub-day window over a DateTime task; date_range covers the same day.
+    test "renders a task inside the window without crashing" do
+      events = [
+        %LiveGantt.Task{
+          id: "t",
+          title: "In window",
+          start: ~N[2026-04-01 10:00:00],
+          end: ~N[2026-04-01 12:00:00]
+        }
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-04-01], ~D[2026-04-01]),
+        ws: ~N[2026-04-01 09:00:00],
+        we: ~N[2026-04-01 13:00:00]
+      }
+
+      html =
+        render(~H[<.gantt
+  id="w"
+  events={@events}
+  date_range={@range}
+  zoom={:hour}
+  window_start={@ws}
+  window_end={@we}
+/>])
+
+      assert html =~ "lg-bar"
+    end
+
+    # Regression for the B1 crash: an event that's inside `date_range` but
+    # OUTSIDE the positioning window must NOT reach `bar_geometry` as an admitted
+    # event (partition and bar_geometry must share the window predicate), or the
+    # template's strict `bar.milestone` access KeyErrors. The window starts at
+    # 10:00; a 08:00–09:00 task is in-range for the whole-day date_range but
+    # before the window.
+    test "an in-date_range but out-of-window task is excluded, not crashed" do
+      events = [
+        %LiveGantt.Task{
+          id: "before",
+          title: "Before window",
+          start: ~N[2026-04-01 08:00:00],
+          end: ~N[2026-04-01 09:00:00]
+        },
+        %LiveGantt.Task{
+          id: "inside",
+          title: "Inside window",
+          start: ~N[2026-04-01 11:00:00],
+          end: ~N[2026-04-01 12:00:00]
+        }
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-04-01], ~D[2026-04-01]),
+        ws: ~N[2026-04-01 10:00:00],
+        we: ~N[2026-04-01 14:00:00]
+      }
+
+      # Must not raise.
+      html =
+        render(~H[<.gantt
+  id="w"
+  events={@events}
+  date_range={@range}
+  zoom={:hour}
+  window_start={@ws}
+  window_end={@we}
+  show_edge_indicators={true}
+/>])
+
+      assert html =~ "Inside window"
+      refute html =~ "Before window"
+    end
+
+    # A degenerate window (end <= start) must be ignored, falling back to the
+    # whole-day range, rather than producing a 0/negative axis that flags every
+    # bar out-of-range.
+    test "a non-positive window falls back to date_range" do
+      events = [
+        %LiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-01], end: ~D[2026-04-02]}
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-04-01], ~D[2026-04-02]),
+        ws: ~N[2026-04-01 12:00:00],
+        we: ~N[2026-04-01 12:00:00]
+      }
+
+      html =
+        render(~H[<.gantt
+  id="w"
+  events={@events}
+  date_range={@range}
+  zoom={:day}
+  window_start={@ws}
+  window_end={@we}
+/>])
+
+      assert html =~ "lg-bar"
+    end
+  end
+
   describe "connector dependency types" do
     defp two_events(offset \\ 10) do
       [
@@ -1532,6 +1661,35 @@ defmodule LiveGanttTest do
       # 3-segment: only one V in the path.
       assert Regex.match?(~r/d="M \d+ \d+ H \d+ V \d+ H \d+"/, html)
       refute Regex.match?(~r/d="M \d+ \d+ H \d+ V \d+ H \d+ V \d+ H \d+"/, html)
+    end
+
+    test "forward path keeps a milestone target's approach ≥ head nudge (no detach)" do
+      # Two FS arrows fan IN to a zero-duration milestone at a wide gap → forward
+      # 3-segment path, and the fan-in preference would pull the trunk to
+      # arrow_stop - @elbow_px (10px approach). The arrowhead is nudged
+      # @milestone_edge_px (12) out, so a 10px approach strands it off the shaft.
+      # The forward path must floor the approach at @milestone_edge_px + 2 = 14.
+      events = [
+        %LiveGantt.Task{id: "s1", start: ~D[2026-04-01], end: ~D[2026-04-03], extra: %{order: 1}},
+        %LiveGantt.Task{id: "s2", start: ~D[2026-04-02], end: ~D[2026-04-04], extra: %{order: 2}},
+        %LiveGantt.Task{id: "m", start: ~D[2026-04-20], end: ~D[2026-04-20], extra: %{order: 3}}
+      ]
+
+      connectors = [%{from: "s1", to: "m"}, %{from: "s2", to: "m"}]
+      assigns = %{events: events, range: sample_range(), connectors: connectors}
+
+      html =
+        render(~H"<.gantt events={@events} date_range={@range} connectors={@connectors} />")
+
+      approaches =
+        Regex.scan(~r/d="M \d+ \d+ H (\d+) V \d+ H (\d+)"/, html)
+        |> Enum.map(fn [_, mid, stop] -> String.to_integer(stop) - String.to_integer(mid) end)
+
+      assert length(approaches) == 2, "expected 2 forward paths, got #{length(approaches)}"
+
+      Enum.each(approaches, fn approach ->
+        assert approach >= 14, "milestone-target approach #{approach}px < 14px (head detaches)"
+      end)
     end
   end
 
@@ -3335,6 +3493,35 @@ defmodule LiveGanttTest do
       # 14.6739%.
       assert html =~
                ~r/id="lg-bar-p"[^>]*style="left: 1.087%; width: 14.6739%/
+    end
+
+    test "sub-day children roll up to a parent BAR, not a midnight milestone" do
+      events = [
+        %LiveGantt.Task{id: "p", start: nil, end: nil, title: "Parent"},
+        %LiveGantt.Task{
+          id: "c1",
+          start: ~N[2026-04-01 10:00:00],
+          end: ~N[2026-04-01 12:00:00],
+          title: "C1",
+          extra: %{parent_id: "p"}
+        },
+        %LiveGantt.Task{
+          id: "c2",
+          start: ~N[2026-04-01 12:00:00],
+          end: ~N[2026-04-01 14:00:00],
+          title: "C2",
+          extra: %{parent_id: "p"}
+        }
+      ]
+
+      assigns = %{events: events, range: Date.range(~D[2026-04-01], ~D[2026-04-01])}
+
+      html = render(~H[<.gantt id="lg" events={@events} date_range={@range} zoom={:hour} />])
+
+      # The parent rolls up to 10:00–14:00 (a 4h span) — must render as a BAR
+      # with width, NOT collapse to a zero-duration midnight milestone diamond.
+      assert html =~ ~r/id="lg-bar-p"[^>]*lg-bar/
+      refute html =~ ~r/id="lg-bar-p"[^>]*lg-milestone/
     end
 
     test "connector to a collapsed child retargets to the parent" do
