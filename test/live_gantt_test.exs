@@ -1420,11 +1420,11 @@ defmodule LiveGanttTest do
 
   describe "connector tight-gap detour" do
     test "forward FS with tight gap routes via 5-segment detour for full-length stems" do
-      # Milestone source + 3 targets starting the day after (1-day FS
-      # gap at week zoom = 12px). The straight 3-segment shape can't
-      # fit clean exit + approach stems in 12px, so the builder should
-      # switch to the 5-segment detour: `M x1 y H stem_out V dy H stem_in
-      # V y2 H arrow_stop`. Both stems get the full @elbow_px (10) of
+      # Milestone source + 3 targets starting the SAME day (0-gap FS — the
+      # source exit and target entry land at the same x). The straight
+      # 3-segment shape has no room for clean exit + approach stems, so the
+      # builder switches to the 5-segment detour: `M x1 y H stem_out V dy H
+      # stem_in V y2 H arrow_stop`. Both stems get the full @elbow_px (10) of
       # horizontal length.
       events = [
         %LiveGantt.Task{
@@ -1436,21 +1436,21 @@ defmodule LiveGanttTest do
         },
         %LiveGantt.Task{
           id: "a",
-          start: ~D[2026-04-22],
+          start: ~D[2026-04-21],
           end: ~D[2026-04-30],
           color: "bg-primary",
           extra: %{order: 2}
         },
         %LiveGantt.Task{
           id: "b",
-          start: ~D[2026-04-22],
+          start: ~D[2026-04-21],
           end: ~D[2026-05-02],
           color: "bg-primary",
           extra: %{order: 3}
         },
         %LiveGantt.Task{
           id: "c",
-          start: ~D[2026-04-22],
+          start: ~D[2026-04-21],
           end: ~D[2026-04-28],
           color: "bg-primary",
           extra: %{order: 4}

@@ -345,7 +345,7 @@ defmodule LiveGantt do
   attr :progress_complete_class, :string, default: "bg-success/40"
 
   # Milestone (zero-duration events, rendered as rotated square)
-  attr :milestone_class, :string, default: "absolute top-1/2 z-10 cursor-pointer w-4 h-4 border-2"
+  attr :milestone_class, :string, default: "absolute top-1/2 z-40 cursor-pointer w-4 h-4 border-2"
 
   attr :milestone_default_color_class, :string, default: "bg-primary"
   attr :milestone_status_cancelled_class, :string, default: "opacity-50"
@@ -1697,8 +1697,11 @@ defmodule LiveGantt do
   # double as the thresholds, so each granularity's columns stay legibly wide).
   # Capped so a wide range at a fine density doesn't emit tens of thousands of
   # column divs — it steps to a coarser granularity instead (the bars keep their
-  # true density; only the gridlines coarsen).
-  @column_budget 800
+  # true density; only the gridlines coarsen). Generous enough that the named
+  # sub-hour zooms keep their clock-time columns at typical project lengths —
+  # 15-min up to ~31 days, 5-min up to ~10 days — before stepping coarser; a
+  # few thousand lightweight column divs render fine.
+  @column_budget 3000
 
   defp column_zoom_for(day_px, total_days) do
     by_density =
@@ -1921,7 +1924,7 @@ defmodule LiveGantt do
         true -> :normal
       end
 
-    %{p | arrow: arrowhead_geometry(tip_x, tip_y, dir, variant)}
+    %{p | arrow: arrowhead_geometry(tip_x, tip_y, dir, variant, p.target_milestone)}
   end
 
   # Post-pass: for every FORWARD path whose trunk pierces an unrelated
@@ -2435,6 +2438,9 @@ defmodule LiveGantt do
       stroke_width: style.stroke_width,
       opacity: style.opacity,
       dasharray: style.dasharray,
+      # Whether the TARGET is a milestone diamond — `finalize_arrowhead/1` uses
+      # it to nudge the head off the diamond's centre to its edge.
+      target_milestone: milestone?(geom.to_event),
       # Placeholder — recomputed from the FINAL `d` by `finalize_arrowhead/1`
       # after path rewrites. Present here so the map has the key to update.
       arrow: nil
@@ -2464,16 +2470,34 @@ defmodule LiveGantt do
   # rendered as % of content width; tip_y in px, vertically un-stretched), the
   # fixed px triangle `d`, and the px nudge that lands the triangle's tip on the
   # anchor. Critical arrows are a touch larger, matching the old marker sizing.
-  defp arrowhead_geometry(tip_x, tip_y, dir, variant) do
+  # Half-diagonal of the default `w-4` (16px) milestone diamond, plus a hair —
+  # how far OUTSIDE the diamond's centre its near point sits. The shaft attaches
+  # at the centre (covered by the z-40 diamond), but the fixed-px arrowhead is
+  # nudged out to here so it reads as pointing AT the diamond, not buried in it.
+  @milestone_edge_px 12
+
+  defp arrowhead_geometry(tip_x, tip_y, dir, variant, target_milestone?) do
     size = if variant == :critical, do: 10, else: 8
     half = div(size, 2)
 
     # Triangle drawn in a 0..size box; tip on the side it points toward, then the
     # svg is offset so that tip coincides with the (tip_x, tip_y) anchor.
-    {d, off_x} =
+    {d, base_off_x} =
       case dir do
         :east -> {"M 0 0 L #{size} #{half} L 0 #{size} z", -size}
         :west -> {"M #{size} 0 L 0 #{half} L #{size} #{size} z", 0}
+      end
+
+    # The container stays anchored on the shaft end (`tip_x`), but for a milestone
+    # target we shift the drawn triangle OUT to the diamond's edge via the svg
+    # offset (a fixed px, so it clears the fixed-px diamond at any fill). The
+    # anchor staying on the shaft end keeps the head-meets-shaft invariant valid;
+    # only the visible triangle moves.
+    nudge =
+      cond do
+        not target_milestone? -> 0
+        dir == :east -> -@milestone_edge_px
+        true -> @milestone_edge_px
       end
 
     %{
@@ -2481,7 +2505,7 @@ defmodule LiveGantt do
       tip_y: tip_y,
       size: size,
       d: d,
-      off_x: off_x,
+      off_x: base_off_x + nudge,
       off_y: -half,
       variant_class: arrowhead_variant_class(variant)
     }
@@ -2711,18 +2735,15 @@ defmodule LiveGantt do
   end
 
   defp endpoints_for(type, from_event, to_event, range, day_px, min_bar_px) do
-    from_is_milestone = milestone?(from_event)
-    to_is_milestone = milestone?(to_event)
-
-    source_ms_offset = if from_is_milestone, do: 10, else: 0
-    # Target gap. For a BAR the arrow tip lands exactly on the bar's edge (gap
-    # 0) so it reads as connected at ANY responsive fill factor — the shaft SVG
-    # stretches with the bars, so a non-zero NATURAL gap would be magnified into
-    # a visible disconnect (e.g. a 4px gap → ~15px at a 3.8× fill). Visual
-    # breathing room comes from the fixed-px arrowhead overlay instead, whose tip
-    # sits on this point and whose body extends back over the shaft. Milestones
-    # keep a 10px gap so the arrow clears the diamond's tip.
-    target_ms_gap = if to_is_milestone, do: 10, else: 0
+    # Connectors attach at gap 0 — the bar's edge, or (for a milestone, where
+    # `rendered_edges` collapses to the diamond's CENTER) the diamond center. A
+    # bar edge reads as connected at any responsive fill because the shaft SVG
+    # stretches in lockstep with the bars. We used to push a milestone's
+    # endpoint out by a 10px "diamond clearance", but that 10px is in CONTENT
+    # units that the fill STRETCHES — so against the FIXED-px diamond it became a
+    # visible gap (the arrow stopping short of the diamond). Attaching at the
+    # center instead lets the diamond (raised above the connector layer) sit
+    # cleanly on the shaft end + arrowhead.
 
     # DRAW from the RENDERED bar edges (honoring `min_bar_px`), so a sub-pixel
     # task that renders wider than its true span still has its arrow attach to
@@ -2742,8 +2763,8 @@ defmodule LiveGantt do
     case type do
       :fs ->
         %{
-          x1: from_end_px + source_ms_offset,
-          arrow_stop: to_start_px - target_ms_gap,
+          x1: from_end_px,
+          arrow_stop: to_start_px,
           source_exit: :east,
           target_entry: :west,
           backward: conflict?(from_end_nat, to_start_nat)
@@ -2751,8 +2772,8 @@ defmodule LiveGantt do
 
       :ss ->
         %{
-          x1: from_start_px - source_ms_offset,
-          arrow_stop: to_start_px - target_ms_gap,
+          x1: from_start_px,
+          arrow_stop: to_start_px,
           source_exit: :west,
           target_entry: :west,
           backward: conflict?(from_start_nat, to_start_nat)
@@ -2760,8 +2781,8 @@ defmodule LiveGantt do
 
       :ff ->
         %{
-          x1: from_end_px + source_ms_offset,
-          arrow_stop: to_end_px + target_ms_gap,
+          x1: from_end_px,
+          arrow_stop: to_end_px,
           source_exit: :east,
           target_entry: :east,
           backward: conflict?(from_end_nat, to_end_nat)
@@ -2769,8 +2790,8 @@ defmodule LiveGantt do
 
       :sf ->
         %{
-          x1: from_start_px - source_ms_offset,
-          arrow_stop: to_end_px + target_ms_gap,
+          x1: from_start_px,
+          arrow_stop: to_end_px,
           source_exit: :west,
           target_entry: :east,
           backward: conflict?(from_start_nat, to_end_nat)
