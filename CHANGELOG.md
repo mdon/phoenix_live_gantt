@@ -26,19 +26,6 @@ standalone package.
 
 ### Fixes
 
-- Milestone connectors no longer distort with the zoom / responsive fill. A
-  connector to/from a milestone used to bolt a fixed-VIEWBOX horizontal stub onto
-  the diamond, but that stub stretches with the fill factor — ballooning into a
-  long horizontal tail at a high fill (e.g. an `:hour` zoom whose tight window
-  fills 4×) and shrinking below the fixed-px arrowhead when scrolling (e.g.
-  `:min5`), leaving the head visibly detached from the shaft. Milestone ends now
-  attach at the diamond centre with a ZERO stem, so two same-column milestones
-  route as a clean vertical line and the arrowhead points ALONG that line
-  (`:north`/`:south`) into the diamond's edge instead of off to the side. The
-  head stays glued to the shaft end at every zoom (only a fixed-px nudge to the
-  diamond edge, no stretchy segment). `PathFormat.terminal/1` now ignores a
-  trailing zero-length segment so it reports the real final direction, and
-  arrowheads render in all four cardinal directions.
 - An open bar/label popover now sits above everything else in the chart
   (`z-[60]`). It was `z-40` — tying with milestone diamonds — and since rows are
   `position: relative` with no z-index (one shared stacking context), a popover

@@ -120,13 +120,7 @@ defmodule LiveGantt.PathFormat do
   """
   @spec terminal(String.t()) :: %{x: number(), y: number(), dir: atom() | nil}
   def terminal(d) when is_binary(d) do
-    # `Enum.dedup` collapses consecutive identical points so a trailing
-    # zero-length segment (e.g. a milestone-routed detour whose `stem_in` and
-    # `arrow_stop` both sit on the diamond centre, emitting a no-op final `H`)
-    # doesn't mask the real final direction — the last MOVING segment wins, and
-    # the arrowhead can point along it (`:north`/`:south`) instead of collapsing
-    # to `:east`. Paths with all-distinct points are unaffected.
-    case points(d) |> Enum.dedup() do
+    case points(d) do
       [_ | _] = pts ->
         {tx, ty} = List.last(pts)
 
