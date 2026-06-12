@@ -2590,7 +2590,11 @@ defmodule LiveGantt do
   # `consolidate_piercing_trunks` re-routes it.
   defp arrowhead_from_d(d) do
     %{x: tip_x, y: tip_y, dir: dir} = PathFormat.terminal(d)
-    {tip_x, tip_y, if(dir == :west, do: :west, else: :east)}
+    # A milestone-routed connector can finish VERTICALLY (a same-column source +
+    # target where the trunk collapses onto the diamond centre), so the head must
+    # point along that final segment. A degenerate/zero-length finish has no
+    # direction — default to east, the historical fallback.
+    {tip_x, tip_y, if(dir in [:east, :west, :north, :south], do: dir, else: :east)}
   end
 
   # Precompute everything the overlay needs: the tip anchor (tip_x in px →
@@ -2607,24 +2611,31 @@ defmodule LiveGantt do
     size = if variant == :critical, do: 10, else: 8
     half = div(size, 2)
 
-    # Triangle drawn in a 0..size box; tip on the side it points toward, then the
-    # svg is offset so that tip coincides with the (tip_x, tip_y) anchor.
-    {d, base_off_x} =
+    # Triangle drawn in a 0..size box, tip on the side it points toward. The
+    # base svg offset places that tip on the (tip_x, tip_y) anchor; the head
+    # points along the shaft's final segment, which for a milestone-routed
+    # vertical connector is north/south rather than east/west.
+    {d, base_off_x, base_off_y} =
       case dir do
-        :east -> {"M 0 0 L #{size} #{half} L 0 #{size} z", -size}
-        :west -> {"M #{size} 0 L 0 #{half} L #{size} #{size} z", 0}
+        :east -> {"M 0 0 L #{size} #{half} L 0 #{size} z", -size, -half}
+        :west -> {"M #{size} 0 L 0 #{half} L #{size} #{size} z", 0, -half}
+        :south -> {"M 0 0 L #{half} #{size} L #{size} 0 z", -half, -size}
+        :north -> {"M 0 #{size} L #{half} 0 L #{size} #{size} z", -half, 0}
       end
 
-    # The container stays anchored on the shaft end (`tip_x`), but for a milestone
-    # target we shift the drawn triangle OUT to the diamond's edge via the svg
-    # offset (a fixed px, so it clears the fixed-px diamond at any fill). The
-    # anchor staying on the shaft end keeps the head-meets-shaft invariant valid;
-    # only the visible triangle moves.
-    nudge =
-      cond do
-        not target_milestone? -> 0
-        dir == :east -> -@milestone_edge_px
-        true -> @milestone_edge_px
+    # The container stays anchored on the shaft end, but for a milestone target
+    # the drawn triangle is shifted OUT to the diamond's edge — back along the
+    # direction it came from — via the svg offset (a fixed px, so it clears the
+    # fixed-px diamond at any fill). The anchor staying on the shaft end keeps the
+    # head-meets-shaft invariant valid; only the visible triangle moves.
+    ms = if target_milestone?, do: @milestone_edge_px, else: 0
+
+    {nudge_x, nudge_y} =
+      case dir do
+        :east -> {-ms, 0}
+        :west -> {ms, 0}
+        :south -> {0, -ms}
+        :north -> {0, ms}
       end
 
     %{
@@ -2632,8 +2643,8 @@ defmodule LiveGantt do
       tip_y: tip_y,
       size: size,
       d: d,
-      off_x: base_off_x + nudge,
-      off_y: -half,
+      off_x: base_off_x + nudge_x,
+      off_y: base_off_y + nudge_y,
       variant_class: arrowhead_variant_class(variant)
     }
   end
@@ -3121,8 +3132,17 @@ defmodule LiveGantt do
     # so the leg's horizontal extent fits the label.
     label_w = Map.get(route, :label_width, 0)
     gap = arrow_stop - x1
-    base_exit = Map.get(route, :exit_stem, @elbow_px)
-    base_entry = Map.get(route, :entry_stem, @elbow_px)
+    # A milestone end attaches at the diamond's CENTRE (`rendered_edges` collapses
+    # it there). Give it a zero stem so the detour doesn't bolt a fixed-VIEWBOX
+    # horizontal stub onto it — that stub stretches with the responsive fill (huge
+    # at a high fill factor, sub-pixel when scrolling, leaving the fixed-px
+    # arrowhead stranded). With both ends zeroed, two same-column milestones route
+    # as a clean vertical line and the head points along it. A real bar end keeps
+    # its normal stem.
+    base_exit = if milestone?(geom.from_event), do: 0, else: Map.get(route, :exit_stem, @elbow_px)
+
+    base_entry =
+      if milestone?(geom.to_event), do: 0, else: Map.get(route, :entry_stem, @elbow_px)
 
     {exit_offset, entry_offset} =
       if label_w > 0 do
