@@ -26,6 +26,16 @@ standalone package.
 
 ### Fixes
 
+- Milestone diamonds are now clickable. They rendered with `cursor-pointer`
+  (the default `milestone_class`) but carried no popover wiring — only the
+  optional `on_event_click` — so a consumer that relied on the built-in popover
+  (as bars do) got a diamond that looked clickable but did nothing. Diamonds now
+  get the same `LgBarPopover` hook + popover sibling as bars, so clicking one
+  opens its title/actions popover AND highlights its dependency tree (fading
+  unrelated tasks) — the tool for tracing arrows through a cluster of
+  same-date milestones. (The dependency highlight walks ancestors only, by
+  design; an inline comment claiming it walked "both directions" was stale and
+  has been corrected.)
 - Column-header "today" highlight now honors the `today` attribute instead
   of always computing against `Date.utc_today()`, so it agrees with the
   today-marker line when a consumer passes an explicit `today`.

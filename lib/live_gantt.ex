@@ -1212,6 +1212,7 @@ defmodule LiveGantt do
 
                   <%= if bar.milestone do %>
                     <div
+                      id={bar_id}
                       class={[
                         "lg-milestone",
                         @milestone_class,
@@ -1222,6 +1223,8 @@ defmodule LiveGantt do
                       style={"left: #{pct(bar.left_px, @content_width)}%; transform: translate(-50%, -50%) rotate(45deg)"}
                       phx-click={@on_event_click}
                       phx-value-event-id={event.id}
+                      phx-hook="LgBarPopover"
+                      data-popover-target={popover_id}
                       data-event-id={event.id}
                       data-group={get_group(event)}
                       data-parent-id={parent_id_of(event)}
@@ -1339,13 +1342,16 @@ defmodule LiveGantt do
                       class={@badge_class}
                       default_color={@badge_default_color_class}
                     />
+                  <% end %>
 
-                    <%!-- Popover anchored to the bar's left edge — sibling
-                       (not child) so the bar's overflow-hidden doesn't clip
-                       it. Always rendered so any bar can show its full
-                       title; the action row only appears when actions
-                       exist. Hidden by default; the LgBarPopover
-                       hook toggles `hidden` on bar click.
+                  <%!-- Popover anchored to the bar / milestone's left edge —
+                       sibling (not child) so the bar's overflow-hidden doesn't
+                       clip it, and rendered for BOTH bars and milestones so a
+                       diamond is clickable too (otherwise a milestone shows a
+                       cursor-pointer but has nowhere to click to). Always
+                       rendered so any task can show its full title; the action
+                       row only appears when actions exist. Hidden by default;
+                       the LgBarPopover hook toggles `hidden` on click.
 
                        `phx-update="ignore"` keeps the JS-applied `hidden`
                        class (and any toggled state) from being wiped on
@@ -1413,7 +1419,6 @@ defmodule LiveGantt do
                         </div>
                       </div>
                     </div>
-                  <% end %>
                 </div>
               <% end %>
 

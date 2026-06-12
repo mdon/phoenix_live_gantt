@@ -235,7 +235,10 @@
       // with new geometry (zoom switch, data change) while the bar id stays
       // put. The bar element itself is always up to date, so copy from it. Only
       // for bar popovers (label popovers are anchored vertically, not by left).
-      if (this.el.classList.contains("lg-bar")) {
+      if (
+        this.el.classList.contains("lg-bar") ||
+        this.el.classList.contains("lg-milestone")
+      ) {
         if (this.el.style.left) p.style.left = this.el.style.left;
         if (this.el.style.width) p.style.minWidth = this.el.style.width;
       }
@@ -244,8 +247,9 @@
       this.el.dataset.popoverOpen = "true";
 
       // Highlight the active task's dependency tree; fade everything else.
-      // Walks the connector graph in BOTH directions from the active task,
-      // so ancestors AND descendants stay full color.
+      // Walks the connector graph BACKWARD from the active task (its transitive
+      // ancestors — what it depends on), plus the parent_id chain. Descendants
+      // are intentionally not included (see `_collectTree`).
       const eventId = this.el.dataset.eventId;
       const popoverId = this.el.dataset.popoverTarget;
       if (eventId && popoverId) {
