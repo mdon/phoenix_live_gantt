@@ -121,6 +121,16 @@ defmodule LiveGantt do
   """
   attr :events, :list, default: []
   attr :date_range, Date.Range, required: true
+
+  attr :window_start, NaiveDateTime,
+    default: nil,
+    doc:
+      "Optional sub-day positioning origin. When `window_start`/`window_end` are both `NaiveDateTime`s, the axis starts/ends at those exact instants instead of `date_range`'s midnight-to-midnight span — useful at `:hour`/`:min15`/`:min5` zoom to begin ~1 column before the first task rather than at midnight (a wall of empty pre-task columns). Snap `window_start` to a column-slot boundary so labels land on round clock times. `date_range` is still used for non-positioning concerns (event partition, edge counts), so keep it covering the same window."
+
+  attr :window_end, NaiveDateTime,
+    default: nil,
+    doc: "Sub-day positioning end instant. See `window_start`."
+
   attr :zoom, :atom, default: :week
   attr :connectors, :list, default: []
   attr :day_markers, :list, default: []
@@ -524,15 +534,41 @@ defmodule LiveGantt do
     # `day_width_px` overrides the per-zoom default — e.g. a consumer doing
     # fit-to-width passes a px-per-day computed from the measured viewport.
     day_px = assigns.day_width_px || day_width_px(assigns.zoom)
-    content_width = total_days * day_px
     row_px = parse_row_height(assigns.row_height)
     min_bar_px = assigns.min_bar_px
+
+    # The POSITIONING window. Normally the whole-day `date_range` (origin =
+    # `range.first` midnight, span = `total_days`). A consumer can override with
+    # a sub-day `window_start`/`window_end` (NaiveDateTime) so the axis starts
+    # partway through a day — e.g. ~1 column before the first task at `:hour`/
+    # `:min15`/`:min5` zoom, instead of a wall of empty pre-task columns from
+    # midnight. `view = {origin, span_days}` threads both through positioning.
+    {origin, span_days} =
+      case {assigns.window_start, assigns.window_end} do
+        {%NaiveDateTime{} = ws, %NaiveDateTime{} = we} ->
+          {ws, NaiveDateTime.diff(we, ws, :second) / 86_400}
+
+        _ ->
+          {range.first, total_days * 1.0}
+      end
+
+    view = {origin, span_days}
+    content_width = round(span_days * day_px)
 
     # Build column headers. Thread the resolved `today` (the explicit
     # `today` attr, else `Date.utc_today()`) so the column highlight
     # agrees with the today-marker line — both must use the same notion
     # of "today" or a consumer-supplied `today` highlights nothing.
-    columns = build_columns(range, column_zoom_for(day_px, total_days), day_px, today)
+    granularity = column_zoom_for(day_px, ceil(span_days))
+
+    columns =
+      case origin do
+        %NaiveDateTime{} when granularity in [:hour, :min15, :min5] ->
+          window_columns(origin, span_days, day_px, slot_minutes(granularity), today)
+
+        _ ->
+          build_columns(range, granularity, day_px, today)
+      end
 
     # --- Sub-project rollup (must run before partition) ---
     # A sub-project parent often has `start: nil, end: nil` and relies
@@ -589,7 +625,7 @@ defmodule LiveGantt do
         expanded_set,
         row_positions,
         row_px,
-        range,
+        view,
         day_px,
         min_bar_px
       )
@@ -633,7 +669,7 @@ defmodule LiveGantt do
         normalized_connectors,
         events_by_id,
         row_positions,
-        range,
+        view,
         day_px,
         min_bar_px
       )
@@ -650,7 +686,7 @@ defmodule LiveGantt do
     bar_obstacles =
       if assigns.avoid_collisions,
         do:
-          compute_bar_obstacles(sorted_events, row_positions, range, day_px, row_px, min_bar_px),
+          compute_bar_obstacles(sorted_events, row_positions, view, day_px, row_px, min_bar_px),
         else: []
 
     # Bundle styling defaults so resolve_style/3 can pick the category
@@ -683,6 +719,7 @@ defmodule LiveGantt do
       events_by_id: events_by_id,
       row_positions: row_positions,
       range: range,
+      view: view,
       day_px: day_px,
       min_bar_px: min_bar_px,
       row_px: row_px,
@@ -716,6 +753,7 @@ defmodule LiveGantt do
       assigns
       |> assign(:today, today)
       |> assign(:total_days, total_days)
+      |> assign(:view, view)
       |> assign(:day_px, day_px)
       |> assign(:min_bar_px, min_bar_px)
       |> assign(:content_width, content_width)
@@ -732,7 +770,7 @@ defmodule LiveGantt do
       |> assign(:subproject_frames, subproject_frames)
       |> assign(:earlier_count, earlier_count)
       |> assign(:later_count, later_count)
-      |> assign(:today_offscreen, today_offscreen_side(today, range))
+      |> assign(:today_offscreen, today_offscreen_side(today, view))
 
     ~H"""
     <div class="lg-wrap relative" dir={to_string(@dir)}>
@@ -1111,9 +1149,9 @@ defmodule LiveGantt do
 
               <%!-- Today marker line --%>
               <div
-                :if={@show_today && today_in_range?(@today, @date_range)}
+                :if={@show_today && today_in_range?(@today, @view)}
                 class={["lg-today", @today_marker_line_class]}
-                style={"left: #{pct(today_left_px(@today, @date_range, @day_px), @content_width)}%; height: #{@content_height}px"}
+                style={"left: #{pct(today_left_px(@today, @view, @day_px), @content_width)}%; height: #{@content_height}px"}
               >
                 <div class={@today_marker_badge_class}>
                   {I18n.label(:today, @translations)}
@@ -1146,7 +1184,7 @@ defmodule LiveGantt do
 
                 <%!-- Bar row --%>
                 <div class={@row_class} style={"height: #{@row_px}px"}>
-                  <% bar = bar_geometry(event, @date_range, @day_px, @min_bar_px) %>
+                  <% bar = bar_geometry(event, @view, @day_px, @min_bar_px) %>
                   <% actions =
                     popover_actions(event, @event_tree, @expanded_set, @on_toggle_expand) %>
                   <% bar_id = bar_dom_id(@id, event.id) %>
@@ -1669,6 +1707,54 @@ defmodule LiveGantt do
 
   defp pad2(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 
+  # Minutes per column slot for a sub-day granularity. Drives `window_columns`.
+  defp slot_minutes(:hour), do: 60
+  defp slot_minutes(:min15), do: 15
+  defp slot_minutes(:min5), do: 5
+
+  # Columns for a sub-day positioning window (origin is a NaiveDateTime partway
+  # through a day, not a midnight Date). `build_columns`/`sub_hour_columns`
+  # enumerate whole days from a `Date.Range`; here we instead walk fixed
+  # `minutes_per_slot` steps from the origin across the window span. Labels match
+  # the whole-day builders: the date on each midnight slot, a bare hour on
+  # `:hour` zoom, and the `:15` clock boundaries on sub-hour zooms (the in-between
+  # 5-minute gridlines stay blank). The consumer snaps `window_start` to a slot
+  # boundary so these labels land on round times.
+  defp window_columns(%NaiveDateTime{} = origin, span_days, day_px, minutes_per_slot, today) do
+    slots_per_day = div(1440, minutes_per_slot)
+    col_px = round(day_px / slots_per_day)
+    num_slots = max(round(span_days * slots_per_day), 1)
+    now = if match?(%DateTime{}, today) or match?(%NaiveDateTime{}, today), do: today, else: nil
+
+    for i <- 0..(num_slots - 1) do
+      slot_dt = NaiveDateTime.add(origin, i * minutes_per_slot, :minute)
+      date = NaiveDateTime.to_date(slot_dt)
+      minute_of_day = slot_dt.hour * 60 + slot_dt.minute
+
+      label =
+        cond do
+          minute_of_day == 0 ->
+            "#{I18n.month_name_short(date.month)} #{date.day}"
+
+          minutes_per_slot == 60 ->
+            "#{slot_dt.hour}"
+
+          rem(minute_of_day, 15) == 0 ->
+            "#{slot_dt.hour}:#{pad2(slot_dt.minute)}"
+
+          true ->
+            ""
+        end
+
+      %{
+        label: label,
+        width_px: col_px,
+        is_today: slot_is_now?(date, minute_of_day, minutes_per_slot, now),
+        non_working: Date.day_of_week(date) in [6, 7]
+      }
+    end
+  end
+
   @doc """
   The default pixels-per-day for a zoom level — `:hour` 720, `:day` 40,
   `:week` 24, `:month` 8. Use it as the floor when computing a fit-to-width
@@ -1785,15 +1871,22 @@ defmodule LiveGantt do
   # or 25 px-hours wide). `x_px/3` rounds to a whole pixel — so for a `Date` at
   # day/week/month zoom it is byte-identical to the old `Date.diff * day_px`,
   # keeping existing behavior; sub-day precision is purely additive.
-  defp frac_days(%Date{} = d, range_first), do: Date.diff(d, range_first) * 1.0
+  # The origin may be a `Date` (the whole-day window — `range.first`) OR a
+  # `NaiveDateTime` (a sub-day window, so the axis can start partway through a
+  # day). Date-origin + Date-temporal keeps the exact integer-day path, so
+  # day/week/month geometry is byte-identical; everything else normalises to
+  # naive datetimes and diffs in seconds.
+  defp frac_days(nil, _origin), do: 0.0
+  defp frac_days(%Date{} = d, %Date{} = origin), do: Date.diff(d, origin) * 1.0
 
-  defp frac_days(%NaiveDateTime{} = ndt, range_first),
-    do: NaiveDateTime.diff(ndt, NaiveDateTime.new!(range_first, ~T[00:00:00]), :second) / 86_400
+  defp frac_days(temporal, origin),
+    do: NaiveDateTime.diff(to_naive_dt(temporal), to_naive_dt(origin), :second) / 86_400
 
-  defp frac_days(%DateTime{} = dt, range_first), do: frac_days(DateTime.to_naive(dt), range_first)
-  defp frac_days(nil, _range_first), do: 0.0
+  defp to_naive_dt(%NaiveDateTime{} = n), do: n
+  defp to_naive_dt(%Date{} = d), do: NaiveDateTime.new!(d, ~T[00:00:00])
+  defp to_naive_dt(%DateTime{} = dt), do: DateTime.to_naive(dt)
 
-  defp x_px(temporal, range_first, day_px), do: round(frac_days(temporal, range_first) * day_px)
+  defp x_px(temporal, origin, day_px), do: round(frac_days(temporal, origin) * day_px)
 
   # Horizontal coordinates render as PERCENTAGES of the content width, not
   # pixels — so the timeline is responsive: it fills the container when the
@@ -1805,14 +1898,17 @@ defmodule LiveGantt do
   defp pct(_px, content_width) when content_width in [0, nil], do: 0.0
   defp pct(px, content_width), do: Float.round(px / content_width * 100, 4)
 
-  defp bar_geometry(event, range, day_px, min_bar_px) do
-    total_days = Date.diff(range.last, range.first) + 1
-    fs = frac_days(event.start, range.first)
-    fe = frac_days(LiveGantt.Task.effective_end(event), range.first)
+  # `view` is `{origin, span_days}` — the positioning origin (a `Date` for a
+  # whole-day window or a `NaiveDateTime` for a sub-day one) and the visible
+  # span in (fractional) days. `{range.first, total_days}` reproduces the old
+  # whole-day behaviour exactly.
+  defp bar_geometry(event, {origin, span_days} = _view, day_px, min_bar_px) do
+    fs = frac_days(event.start, origin)
+    fe = frac_days(LiveGantt.Task.effective_end(event), origin)
     is_milestone = fe - fs <= 0
 
     cond do
-      out_of_range_frac?(fs, fe, is_milestone, total_days) ->
+      out_of_range_frac?(fs, fe, is_milestone, span_days) ->
         %{out_of_range: true}
 
       is_milestone ->
@@ -1820,7 +1916,7 @@ defmodule LiveGantt do
 
       true ->
         vis_start = max(fs, 0.0)
-        vis_end = min(fe, total_days * 1.0)
+        vis_end = min(fe, span_days)
         left_px = max(round(vis_start * day_px), 0)
         # Width reflects the TRUE duration; `min_bar_px` (default 0) is an
         # optional floor so a sub-pixel task can stay a visible sliver. With the
@@ -2374,7 +2470,7 @@ defmodule LiveGantt do
         conn.type,
         geom.from_event,
         geom.to_event,
-        ctx.range,
+        ctx.view,
         ctx.day_px,
         ctx.min_bar_px
       )
@@ -2720,8 +2816,8 @@ defmodule LiveGantt do
   # its center point (the ±10px diamond offset is applied by the caller).
   # Out-of-range falls back to raw temporal coords (the connector is typically
   # not drawn in that case anyway).
-  defp rendered_edges(event, range, day_px, min_bar_px) do
-    case bar_geometry(event, range, day_px, min_bar_px) do
+  defp rendered_edges(event, {origin, _span} = view, day_px, min_bar_px) do
+    case bar_geometry(event, view, day_px, min_bar_px) do
       %{milestone: true, left_px: l} ->
         {l, l}
 
@@ -2729,12 +2825,12 @@ defmodule LiveGantt do
         {l, l + w}
 
       _ ->
-        {x_px(event.start, range.first, day_px),
-         x_px(LiveGantt.Task.effective_end(event), range.first, day_px)}
+        {x_px(event.start, origin, day_px),
+         x_px(LiveGantt.Task.effective_end(event), origin, day_px)}
     end
   end
 
-  defp endpoints_for(type, from_event, to_event, range, day_px, min_bar_px) do
+  defp endpoints_for(type, from_event, to_event, {origin, _span} = view, day_px, min_bar_px) do
     # Connectors attach at gap 0 — the bar's edge, or (for a milestone, where
     # `rendered_edges` collapses to the diamond's CENTER) the diamond center. A
     # bar edge reads as connected at any responsive fill because the shaft SVG
@@ -2748,17 +2844,18 @@ defmodule LiveGantt do
     # DRAW from the RENDERED bar edges (honoring `min_bar_px`), so a sub-pixel
     # task that renders wider than its true span still has its arrow attach to
     # the bar AS DRAWN rather than emerging from inside it.
-    {from_start_px, from_end_px} = rendered_edges(from_event, range, day_px, min_bar_px)
-    {to_start_px, to_end_px} = rendered_edges(to_event, range, day_px, min_bar_px)
+    {from_start_px, from_end_px} = rendered_edges(from_event, view, day_px, min_bar_px)
+    {to_start_px, to_end_px} = rendered_edges(to_event, view, day_px, min_bar_px)
 
     # JUDGE backward/invalid from the NATURAL temporal edges, NOT the rendered
     # ones — the conflict is about the schedule, not the min-width-inflated
     # render. (Otherwise a zero-gap FS dep — B starting exactly when A finishes —
     # is wrongly flagged backward because A's 1px sliver pokes past B's start.)
-    from_start_nat = x_px(from_event.start, range.first, day_px)
-    from_end_nat = x_px(LiveGantt.Task.effective_end(from_event), range.first, day_px)
-    to_start_nat = x_px(to_event.start, range.first, day_px)
-    to_end_nat = x_px(LiveGantt.Task.effective_end(to_event), range.first, day_px)
+    # Origin is shared, so the relative comparison is unaffected by which it is.
+    from_start_nat = x_px(from_event.start, origin, day_px)
+    from_end_nat = x_px(LiveGantt.Task.effective_end(from_event), origin, day_px)
+    to_start_nat = x_px(to_event.start, origin, day_px)
+    to_end_nat = x_px(LiveGantt.Task.effective_end(to_event), origin, day_px)
 
     case type do
       :fs ->
@@ -3109,7 +3206,7 @@ defmodule LiveGantt do
          normalized_connectors,
          events_by_id,
          row_positions,
-         range,
+         view,
          day_px,
          min_bar_px
        ) do
@@ -3132,7 +3229,7 @@ defmodule LiveGantt do
 
         true ->
           %{backward: backward} =
-            endpoints_for(c.type, from_event, to_event, range, day_px, min_bar_px)
+            endpoints_for(c.type, from_event, to_event, view, day_px, min_bar_px)
 
           backward
       end
@@ -3344,10 +3441,10 @@ defmodule LiveGantt do
   # If no bar-free x exists in the valid range, we keep the preferred
   # placement — an arrow crossing a bar is better than a broken shape.
 
-  defp compute_bar_obstacles(sorted_events, row_positions, range, day_px, row_px, min_bar_px) do
+  defp compute_bar_obstacles(sorted_events, row_positions, view, day_px, row_px, min_bar_px) do
     Enum.map(sorted_events, fn event ->
       pos = Map.get(row_positions.positions, event.id)
-      bar = bar_geometry(event, range, day_px, min_bar_px)
+      bar = bar_geometry(event, view, day_px, min_bar_px)
 
       # Milestone diamonds are ~16px rotated 45° — use a symmetric 11px
       # half-width hit box around their center (which equals bar.left_px
@@ -4342,7 +4439,7 @@ defmodule LiveGantt do
          expanded,
          row_positions,
          row_px,
-         range,
+         view,
          day_px,
          min_bar_px
        ) do
@@ -4372,7 +4469,7 @@ defmodule LiveGantt do
           []
 
         _ ->
-          bar = bar_geometry(parent, range, day_px, min_bar_px)
+          bar = bar_geometry(parent, view, day_px, min_bar_px)
 
           if Map.get(bar, :out_of_range) do
             []
@@ -4812,21 +4909,20 @@ defmodule LiveGantt do
 
   # -- Today marker helpers --
 
-  defp today_in_range?(today, range) do
-    fd = frac_days(today, range.first)
-    fd >= 0 and fd < Date.diff(range.last, range.first) + 1
+  defp today_in_range?(today, {origin, span_days}) do
+    fd = frac_days(today, origin)
+    fd >= 0 and fd < span_days
   end
 
   # Which edge today sits past, or nil when it's on-screen. Drives the
   # off-screen "Today" directional hint (so the axis needn't stretch to reach
   # a far-away today).
-  defp today_offscreen_side(today, range) do
-    fd = frac_days(today, range.first)
-    total = Date.diff(range.last, range.first) + 1
+  defp today_offscreen_side(today, {origin, span_days}) do
+    fd = frac_days(today, origin)
 
     cond do
       fd < 0 -> :before
-      fd >= total -> :after
+      fd >= span_days -> :after
       true -> nil
     end
   end
@@ -4834,10 +4930,10 @@ defmodule LiveGantt do
   # A `Date` today has no time-of-day, so center the marker in its day; a
   # `DateTime`/`NaiveDateTime` "now" lands at its exact position (precise at
   # hour zoom).
-  defp today_left_px(%Date{} = today, range, day_px),
-    do: x_px(today, range.first, day_px) + div(day_px, 2)
+  defp today_left_px(%Date{} = today, {origin, _span}, day_px),
+    do: x_px(today, origin, day_px) + div(day_px, 2)
 
-  defp today_left_px(today, range, day_px), do: x_px(today, range.first, day_px)
+  defp today_left_px(today, {origin, _span}, day_px), do: x_px(today, origin, day_px)
 
   # -- Non-working dates --
 

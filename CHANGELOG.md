@@ -70,6 +70,21 @@ standalone package.
 
 ### Features
 
+- **`window_start` / `window_end` attrs — sub-day positioning window.** The
+  positioning axis is normally `date_range`'s whole-day, midnight-to-midnight
+  span. A consumer can now override the ORIGIN and SPAN with a pair of
+  `NaiveDateTime`s so the axis starts/ends partway through a day — e.g. ~1 column
+  before the first task at `:hour`/`:min15`/`:min5` zoom, instead of a wall of
+  empty pre-task columns from midnight. Positioning threads a `view = {origin,
+  span_days}` (origin is the whole-day `range.first` Date in the default path, a
+  `NaiveDateTime` when overridden) through bars, connector endpoints, the today
+  marker, sub-project frames, obstacles, and a new `window_columns/5` column
+  builder that walks fixed slot-minute steps from the origin (labels: the date on
+  each midnight slot, a bare hour on `:hour`, the `:15` clock boundaries on
+  sub-hour zooms). `date_range` still drives event partition / edge counts, so
+  keep it covering the same window. Behavior is byte-identical when the override
+  is absent (origin = `range.first`, span = `total_days`). Snap `window_start` to
+  a slot boundary so column labels land on round clock times.
 - **`tiny_bar_px` attr (default `5`) — "too small to see" marker.** A bar whose
   TRUE width renders narrower than this many SCREEN pixels gets a small
   fixed-size down-triangle at the task's start, signalling a task that's there
