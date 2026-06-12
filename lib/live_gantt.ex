@@ -54,6 +54,13 @@ defmodule LiveGantt do
   # Row heights in pixels (matches default row_height attr of "2.5rem" = 40px)
   @default_row_px 40
   @group_header_px 28
+  # Horizontal breathing room (px) reserved on EACH side of the time axis so a
+  # connector exiting/entering a task at the very edge of the window — its
+  # exit/entry stub bulges ~@elbow_px past the bar — has somewhere to draw
+  # instead of clipping off the chart edge. The whole px coordinate system is
+  # shifted right by this (via `x_px` + `bar_geometry`), `content_width` grows by
+  # 2×, and transparent spacer columns hold the margin so the grid stays aligned.
+  @axis_pad_px 16
   # Connector routing — preferred elbow stem length.
   @elbow_px 10
   # Hard minimum stem visibility. The bus-preferred elbow is ≥ this, but
@@ -579,7 +586,7 @@ defmodule LiveGantt do
       end
 
     view = {origin, span_days}
-    content_width = round(span_days * day_px)
+    content_width = round(span_days * day_px) + 2 * @axis_pad_px
 
     # Build column headers. Thread the resolved `today` (the explicit
     # `today` attr, else `Date.utc_today()`) so the column highlight
@@ -595,6 +602,7 @@ defmodule LiveGantt do
         _ ->
           build_columns(range, granularity, day_px, today)
       end
+      |> pad_axis_columns()
 
     # --- Sub-project rollup (must run before partition) ---
     # A sub-project parent often has `start: nil, end: nil` and relies
@@ -1007,11 +1015,15 @@ defmodule LiveGantt do
             >
               <div
                 :for={col <- @columns}
-                class={[
-                  "lg-col-header",
-                  @column_header_class,
-                  col.is_today && @column_header_today_class
-                ]}
+                class={
+                  unless col[:spacer] do
+                    [
+                      "lg-col-header",
+                      @column_header_class,
+                      col.is_today && @column_header_today_class
+                    ]
+                  end
+                }
                 style={"width: #{pct(col.width_px, @content_width)}%"}
               >
                 {col.label}
@@ -1164,10 +1176,14 @@ defmodule LiveGantt do
               <div class="absolute inset-0 flex pointer-events-none">
                 <div
                   :for={col <- @columns}
-                  class={[
-                    @column_divider_class,
-                    col.non_working && @non_working_class
-                  ]}
+                  class={
+                    unless col[:spacer] do
+                      [
+                        @column_divider_class,
+                        col.non_working && @non_working_class
+                      ]
+                    end
+                  }
                   style={"width: #{pct(col.width_px, @content_width)}%"}
                 >
                 </div>
@@ -1627,6 +1643,23 @@ defmodule LiveGantt do
 
   # -- Column building (returns columns with pixel widths) --
 
+  # Wrap the time columns with a transparent spacer on each side, so the grid
+  # occupies `[@axis_pad_px, content_width - @axis_pad_px]` — matching the
+  # coordinate shift in `x_px`/`bar_geometry`. The spacer carries no label,
+  # border, or shading: it's pure margin where an edge-of-window connector stub
+  # can draw instead of clipping off the chart.
+  defp pad_axis_columns(columns) do
+    spacer = %{
+      label: "",
+      width_px: @axis_pad_px,
+      is_today: false,
+      non_working: false,
+      spacer: true
+    }
+
+    [spacer | columns] ++ [spacer]
+  end
+
   # Per-hour columns (24 per day). The day's date is shown on the 00:00 column,
   # the hour number on the rest. The column matching `now` (when `today` carries
   # a time) is flagged `is_today` so the current hour highlights.
@@ -1917,7 +1950,13 @@ defmodule LiveGantt do
   defp to_naive_dt(%Date{} = d), do: NaiveDateTime.new!(d, ~T[00:00:00])
   defp to_naive_dt(%DateTime{} = dt), do: DateTime.to_naive(dt)
 
-  defp x_px(temporal, origin, day_px), do: round(frac_days(temporal, origin) * day_px)
+  # `@axis_pad_px` shifts the whole coordinate system right so x=0 (the window
+  # origin) sits a margin in from the chart's left edge, leaving room for a
+  # connector stub that exits/enters a task at the very edge. `content_width`
+  # carries the matching 2× growth and spacer columns hold the margin, so bars
+  # still exactly cover their time columns — only the absolute %s move.
+  defp x_px(temporal, origin, day_px),
+    do: @axis_pad_px + round(frac_days(temporal, origin) * day_px)
 
   # Horizontal coordinates render as PERCENTAGES of the content width, not
   # pixels — so the timeline is responsive: it fills the container when the
@@ -1943,12 +1982,17 @@ defmodule LiveGantt do
         %{out_of_range: true}
 
       is_milestone ->
-        %{left_px: max(round(fs * day_px), 0), width_px: 0, milestone: true, out_of_range: false}
+        %{
+          left_px: @axis_pad_px + max(round(fs * day_px), 0),
+          width_px: 0,
+          milestone: true,
+          out_of_range: false
+        }
 
       true ->
         vis_start = max(fs, 0.0)
         vis_end = min(fe, span_days)
-        left_px = max(round(vis_start * day_px), 0)
+        left_px = @axis_pad_px + max(round(vis_start * day_px), 0)
         # Width reflects the TRUE duration; `min_bar_px` (default 0) is an
         # optional floor so a sub-pixel task can stay a visible sliver. With the
         # default the bar is honest — a too-short-to-see task is a hairline until

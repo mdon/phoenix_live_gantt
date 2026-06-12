@@ -26,6 +26,15 @@ standalone package.
 
 ### Fixes
 
+- Connectors to/from a task at the very edge of the window no longer clip off the
+  chart. A task flush against the left/right edge had no room for its connector's
+  exit/entry stub (it bulges ~`@elbow_px` past the bar), so the stub — and
+  sometimes the arrowhead — drew past `content_width` and got clipped by the
+  chart's `overflow-x-auto`. The time axis now reserves a fixed `@axis_pad_px`
+  (16px) of horizontal breathing room on each side: every x coordinate shifts in
+  by the pad, `content_width` grows by 2×, and transparent spacer columns hold
+  the margin so bars still exactly cover their time columns. (Absolute %s move,
+  but every layer shares the padded denominator, so alignment is unchanged.)
 - Arrowheads into a milestone no longer detach from the shaft at a low fill
   factor. The head is nudged `@milestone_edge_px` (12px) out to the diamond's
   edge — a fixed SCREEN px — but it rides the connector's final approach segment,

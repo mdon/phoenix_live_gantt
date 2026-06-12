@@ -1131,10 +1131,11 @@ defmodule LiveGanttTest do
 
       html = render(~H[<.gantt id="h" events={@events} date_range={@range} zoom={:hour} />])
 
-      # Horizontal coords render as % of content width (1440px = 2d × 720):
-      # left 270/1440 = 18.75%, width 60/1440 = 4.1667%.
-      assert html =~ ~s(left: 18.75%)
-      assert html =~ ~s(width: 4.1667%)
+      # Horizontal coords render as % of content width. content width is
+      # 2d × 720 + 2 × @axis_pad_px (16) = 1472px; bar x is also shifted by the
+      # pad: left (16 + 270)/1472 = 19.4293%, width 60/1472 = 4.0761%.
+      assert html =~ ~s(left: 19.4293%)
+      assert html =~ ~s(width: 4.0761%)
       # 24 hour-columns per day × 2 days = 48 columns.
       assert (html |> String.split("lg-col-header") |> length()) - 1 == 48
     end
@@ -1166,15 +1167,16 @@ defmodule LiveGanttTest do
 
       # Coordinates are now % of content width (responsive), so `day_width_px`
       # sets the natural CONTENT width (the scroll min-width), not bar pixels.
-      # Override 100px/day on a 2-day range → min-width 200px; the 1-day bar is
-      # 50% wide regardless.
+      # Override 100px/day on a 2-day range → 200px of time axis + 2 × @axis_pad_px
+      # (16) connector margin = min-width 232px. The 1-day bar (px 16..116) is
+      # 100/232 = 43.1034% wide and still exactly covers its day column.
       html =
         render(
           ~H[<.gantt id="g" events={@events} date_range={@range} zoom={:day} day_width_px={100} />]
         )
 
-      assert html =~ "min-width: 200px"
-      assert html =~ "left: 0.0%; width: 50.0%"
+      assert html =~ "min-width: 232px"
+      assert html =~ "left: 6.8966%; width: 43.1034%"
     end
 
     test "default_day_width_px/1 exposes the per-zoom defaults" do
@@ -2071,11 +2073,12 @@ defmodule LiveGanttTest do
       html =
         render(~H"<.gantt events={@events} date_range={@range} connectors={@connectors} />")
 
-      # In 5-seg detour `M x1 y1 H stem_out`, stem_out = x1 + exit_stem.
-      # x1 = 4*24 = 96, stem_out = 121. arrow_stop = 19*24 = 456 (gap 0: the tip
-      # lands on the target edge, the fixed-px arrowhead gives the separation).
-      # stem_in = arrow_stop - entry_stem = 451.
-      assert Regex.match?(~r/d="M 96 \d+ H 121 V \d+ H 451/, html)
+      # In 5-seg detour `M x1 y1 H stem_out`, stem_out = x1 + exit_stem. Every x
+      # is shifted by @axis_pad_px (16) for the connector margin: x1 = 16 + 4*24 =
+      # 112, stem_out = 137. arrow_stop = 16 + 19*24 = 472 (gap 0: the tip lands on
+      # the target edge, the fixed-px arrowhead gives the separation). stem_in =
+      # arrow_stop - entry_stem = 467.
+      assert Regex.match?(~r/d="M 112 \d+ H 137 V \d+ H 467/, html)
     end
 
     test "avoid_collisions: false disables per-connector collision shifts" do
@@ -3326,10 +3329,12 @@ defmodule LiveGanttTest do
       html =
         render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
 
-      # Children span Apr 1 → Apr 10 = 216px (9d × 24) of a 1440px content
-      # width (60-day sample_range × 24). As % of content: left 0%, width 15%.
+      # Children span Apr 1 → Apr 10 = 216px (9d × 24). Content width is the
+      # 60-day sample_range × 24 + 2 × @axis_pad_px (16) = 1472px, and the bar x
+      # is shifted by the pad: left (16 + 0)/1472 = 1.087%, width 216/1472 =
+      # 14.6739%.
       assert html =~
-               ~r/id="lg-bar-p"[^>]*style="left: 0.0%; width: 15.0%/
+               ~r/id="lg-bar-p"[^>]*style="left: 1.087%; width: 14.6739%/
     end
 
     test "connector to a collapsed child retargets to the parent" do
