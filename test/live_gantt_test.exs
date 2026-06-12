@@ -3,7 +3,10 @@ defmodule LiveGanttTest do
 
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
   import Phoenix.Component, only: [sigil_H: 2]
+  import ExUnit.CaptureIO, only: [capture_io: 1]
   import LiveGantt
+
+  alias Mix.Tasks.LiveGantt.Dump
 
   defp render(content), do: rendered_to_string(content)
 
@@ -1454,6 +1457,78 @@ defmodule LiveGanttTest do
 />])
 
       assert html =~ "lg-bar"
+    end
+
+    test "a bare Date `today` shows under a sub-day window (H3)" do
+      # window_start is intra-day (08:00); a bare Date today (no time) must be
+      # treated as the whole day, so its line renders and no spurious "← Today"
+      # edge pill appears — even though midnight sits before the 08:00 origin.
+      events = [
+        %LiveGantt.Task{
+          id: "t",
+          title: "T",
+          start: ~N[2026-04-01 10:00:00],
+          end: ~N[2026-04-01 12:00:00]
+        }
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-04-01], ~D[2026-04-01]),
+        ws: ~N[2026-04-01 08:00:00],
+        we: ~N[2026-04-01 14:00:00],
+        today: ~D[2026-04-01]
+      }
+
+      html =
+        render(~H[<.gantt
+  id="w"
+  events={@events}
+  date_range={@range}
+  zoom={:hour}
+  window_start={@ws}
+  window_end={@we}
+  today={@today}
+  show_edge_indicators={true}
+/>])
+
+      assert html =~ "lg-today"
+      refute html =~ "lg-today-edge"
+    end
+
+    test "a NaiveDateTime window drives the columns even when granularity demotes (M3)" do
+      # An intra-day origin must build its headers from the WINDOW, not the
+      # date_range — otherwise headers (date-range midnights) disagree with the
+      # window-positioned bars. At :day zoom over a 2-day NDT window, the columns
+      # come from the window (hourly fallback → many columns), not 2 day columns.
+      events = [
+        %LiveGantt.Task{
+          id: "t",
+          title: "T",
+          start: ~N[2026-04-01 06:00:00],
+          end: ~N[2026-04-01 10:00:00]
+        }
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-04-01], ~D[2026-04-02]),
+        ws: ~N[2026-04-01 00:00:00],
+        we: ~N[2026-04-03 00:00:00]
+      }
+
+      html =
+        render(~H[<.gantt
+  id="w"
+  events={@events}
+  date_range={@range}
+  zoom={:day}
+  window_start={@ws}
+  window_end={@we}
+/>])
+
+      col_count = (html |> String.split("lg-col-header") |> length()) - 1
+      assert col_count > 2, "expected window-based columns, got #{col_count}"
     end
   end
 
@@ -3817,6 +3892,268 @@ defmodule LiveGanttTest do
       assert LiveGantt.toggle_expanded(nil, "a") == MapSet.new(["a"])
       assert LiveGantt.toggle_expanded(["a"], "b") == MapSet.new(["a", "b"])
       assert LiveGantt.toggle_expanded(["a", "b"], "a") == MapSet.new(["b"])
+    end
+  end
+
+  describe "min_bar_px (M8 coverage)" do
+    # A 1-hour task on a 60-day sample_range at :month zoom (day_px = 8) has a
+    # true width of round((1/24) * 8) = 0px. content_width = round(60 * 8) +
+    # 2 * 16 = 512px, so the 4px floor renders as 4/512 = 0.7813%.
+    defp tiny_task do
+      %LiveGantt.Task{
+        id: "tiny",
+        title: "Tiny",
+        start: ~N[2026-04-01 09:00:00],
+        end: ~N[2026-04-01 10:00:00],
+        color: "bg-primary"
+      }
+    end
+
+    defp bar_width_pct(html) do
+      [_, w] =
+        Regex.run(~r/class="lg-bar[^"]*"\s+style="left: [\d.]+%; width: ([\d.]+)%"/, html)
+
+      String.to_float(w)
+    end
+
+    test "floors a sub-pixel bar to min_bar_px when set" do
+      assigns = %{events: [tiny_task()], range: sample_range()}
+
+      html =
+        render(~H[<.gantt events={@events} date_range={@range} zoom={:month} min_bar_px={4} />])
+
+      # content_width = round(60 * 8) + 2 * 16 = 512px. 4px floor = 0.78125%.
+      expected_floor_pct = 4 / 512 * 100
+      assert bar_width_pct(html) >= expected_floor_pct
+      assert html =~ "width: 0.7813%"
+    end
+
+    test "default min_bar_px (0) leaves a sub-pixel bar as an honest hairline" do
+      assigns = %{events: [tiny_task()], range: sample_range()}
+
+      floored =
+        render(~H[<.gantt events={@events} date_range={@range} zoom={:month} min_bar_px={4} />])
+
+      honest = render(~H[<.gantt events={@events} date_range={@range} zoom={:month} />])
+
+      # Honest hairline is narrower than the 4px-floored bar.
+      assert bar_width_pct(honest) < bar_width_pct(floored)
+      assert honest =~ "width: 0.0%"
+    end
+  end
+
+  describe "sub-day zooms (M8 coverage)" do
+    defp one_day_range, do: Date.range(~D[2026-04-01], ~D[2026-04-01])
+
+    defp two_hour_task do
+      %LiveGantt.Task{
+        id: "t",
+        title: "T",
+        start: ~N[2026-04-01 00:00:00],
+        end: ~N[2026-04-01 02:00:00],
+        color: "bg-primary"
+      }
+    end
+
+    defp col_count(html), do: (html |> String.split("lg-col-header") |> length()) - 1
+
+    test ":min15 renders 96 columns/day with clock-time labels" do
+      assigns = %{events: [two_hour_task()], range: one_day_range()}
+
+      html = render(~H[<.gantt events={@events} date_range={@range} zoom={:min15} />])
+
+      # 1-day range × 96 slots/day = 96 columns.
+      assert col_count(html) == 96
+      # :15 clock boundaries get labelled (in-between 5-min ticks stay blank).
+      assert html =~ "0:15"
+      assert html =~ ":15"
+    end
+
+    test ":min5 renders 288 columns/day" do
+      assigns = %{events: [two_hour_task()], range: one_day_range()}
+
+      html = render(~H[<.gantt events={@events} date_range={@range} zoom={:min5} />])
+
+      # 1-day range × 288 slots/day = 288 columns.
+      assert col_count(html) == 288
+      # :15 clock boundaries still labelled at this finer zoom.
+      assert html =~ ":15"
+    end
+  end
+
+  describe "dir / RTL (M8 coverage)" do
+    test "dir={:rtl} puts dir=\"rtl\" on the root wrapper" do
+      assigns = %{events: sample_events(), range: sample_range()}
+
+      html = render(~H[<.gantt events={@events} date_range={@range} dir={:rtl} />])
+
+      assert html =~ ~s(dir="rtl")
+    end
+
+    test "defaults to dir=\"ltr\"" do
+      assigns = %{events: sample_events(), range: sample_range()}
+
+      html = render(~H[<.gantt events={@events} date_range={@range} />])
+
+      assert html =~ ~s(dir="ltr")
+      refute html =~ ~s(dir="rtl")
+    end
+  end
+
+  describe "mix live_gantt.dump (M8 coverage)" do
+    test "runs without raising for a built-in fixture and prints geometry" do
+      output =
+        capture_io(fn ->
+          Dump.run(["simple"])
+        end)
+
+      # The dump pretty-prints the structured geometry sections.
+      assert output =~ "Rows"
+      assert output =~ "Connectors"
+      assert output =~ "forward:"
+    end
+
+    test "Inspector geometry of a dump fixture exposes the documented keys" do
+      # The dump renders a fixture and runs it through Inspector.inspect_html;
+      # assert that shape carries the geometry keys the task relies on.
+      events = [
+        %LiveGantt.Task{id: "a", start: ~D[2026-05-01], end: ~D[2026-05-06], color: "bg-primary"},
+        %LiveGantt.Task{id: "b", start: ~D[2026-05-07], end: ~D[2026-05-11], color: "bg-primary"}
+      ]
+
+      html =
+        LiveGantt.TestHelpers.render_waterfall(events, connectors: [%{from: "a", to: "b"}])
+
+      geom = LiveGantt.Inspector.inspect_html(html)
+
+      for key <- [:rows, :bars, :connectors, :arrowheads, :edges] do
+        assert Map.has_key?(geom, key), "expected geometry key #{inspect(key)}"
+      end
+
+      assert is_list(geom.rows)
+      assert is_map(geom.bars)
+      assert %{earlier: _, later: _} = geom.edges
+    end
+  end
+
+  describe "i18n overrides (M1 regression)" do
+    test "month_names_short override renders in the month-zoom header" do
+      range = Date.range(~D[2026-04-01], ~D[2026-04-30])
+
+      events = [
+        %LiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-05], end: ~D[2026-04-10]}
+      ]
+
+      assigns = %{events: events, range: range}
+
+      html =
+        render(~H[<.gantt
+  events={@events}
+  date_range={@range}
+  zoom={:month}
+  translations={%{month_names_short: %{4 => "Avril"}}}
+/>])
+
+      assert html =~ "Avril"
+      refute html =~ ">Apr<"
+    end
+
+    test "labels.task override renders as the label-column header" do
+      range = Date.range(~D[2026-04-01], ~D[2026-04-30])
+
+      events = [
+        %LiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-05], end: ~D[2026-04-10]}
+      ]
+
+      assigns = %{events: events, range: range}
+
+      html =
+        render(~H[<.gantt
+  events={@events}
+  date_range={@range}
+  show_header={true}
+  on_zoom_change="z"
+  translations={%{labels: %{task: "Tâche"}}}
+/>])
+
+      assert html =~ "Tâche"
+    end
+  end
+
+  describe "Layout.sequential cycle (M2 regression)" do
+    test "includes every id even with a parent_id cycle" do
+      # a's parent is b, b's parent is a (a 2-node cycle), plus a normal c.
+      # The tree walk never reaches a/b through the root; the missing-id pass
+      # must still lay them out so none are dropped.
+      items = [
+        %{id: "a", parent_id: "b", duration: 2, start: ~D[2026-04-01]},
+        %{id: "b", parent_id: "a", duration: 2, start: ~D[2026-04-01]},
+        %{id: "c", parent_id: nil, duration: 2, start: ~D[2026-04-01]}
+      ]
+
+      result =
+        LiveGantt.Layout.sequential(items,
+          start: ~D[2026-04-01],
+          id: & &1.id,
+          parent_id: & &1.parent_id,
+          duration: & &1.duration
+        )
+
+      assert Map.has_key?(result, "a")
+      assert Map.has_key?(result, "b")
+      assert Map.has_key?(result, "c")
+      assert Map.keys(result) |> Enum.sort() == ["a", "b", "c"]
+    end
+  end
+
+  describe "a11y + hook gating (M5 regression)" do
+    defp a11y_events do
+      [
+        %LiveGantt.Task{
+          id: "bar",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          title: "Bar",
+          color: "bg-primary"
+        },
+        %LiveGantt.Task{
+          id: "ms",
+          start: ~D[2026-04-10],
+          end: ~D[2026-04-10],
+          title: "Milestone",
+          color: "bg-success"
+        }
+      ]
+    end
+
+    test "enable_hooks=true adds tabindex + role=button to bars/milestones" do
+      assigns = %{events: a11y_events(), range: sample_range()}
+
+      html =
+        render(~H[<.gantt id="g" events={@events} date_range={@range} enable_hooks={true} />])
+
+      assert html =~ ~s(tabindex="0")
+      assert html =~ ~s(role="button")
+    end
+
+    test "enable_hooks=false (default) omits tabindex/role on bars" do
+      assigns = %{events: a11y_events(), range: sample_range()}
+
+      html = render(~H[<.gantt id="g" events={@events} date_range={@range} />])
+
+      refute html =~ ~s(tabindex="0")
+    end
+
+    test "enable_hooks gates the LgBarPopover hook" do
+      assigns = %{events: a11y_events(), range: sample_range()}
+
+      with_hooks =
+        render(~H[<.gantt id="g" events={@events} date_range={@range} enable_hooks={true} />])
+
+      without_hooks = render(~H[<.gantt id="g" events={@events} date_range={@range} />])
+
+      assert with_hooks =~ ~s(phx-hook="LgBarPopover")
+      refute without_hooks =~ ~s(phx-hook="LgBarPopover")
     end
   end
 end

@@ -10,6 +10,7 @@ doc/
 hex_metadata.config
 *.tar
 *.lock
+!mix.lock
 
 # Editor
 .vscode/

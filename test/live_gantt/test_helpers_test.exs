@@ -322,4 +322,162 @@ defmodule LiveGantt.TestHelpersTest do
       assert length(diff.connectors.removed) == 5
     end
   end
+
+  # M7: the detectors are only ever exercised against PASSING fixtures, so a
+  # broken detector that never raises would slip through. These tests feed each
+  # detector an input that VIOLATES its invariant and assert it RAISES. We start
+  # from a real render and surgically mutate the HTML the Inspector parses, so
+  # everything else stays self-consistent.
+  describe "assertion detectors raise on violating fixtures (M7)" do
+    defp simple_chain_html do
+      events = [
+        %LiveGantt.Task{
+          id: "a",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          color: "bg-primary"
+        },
+        %LiveGantt.Task{
+          id: "b",
+          start: ~D[2026-04-10],
+          end: ~D[2026-04-15],
+          color: "bg-primary"
+        }
+      ]
+
+      TestHelpers.render_waterfall(events, connectors: [%{from: "a", to: "b"}])
+    end
+
+    test "assert_arrow_tips_clear_target_bars raises when a tip pierces into the target bar" do
+      html = simple_chain_html()
+
+      # Sanity: the pristine render passes.
+      assert :ok = TestHelpers.assert_arrow_tips_clear_target_bars(html)
+
+      # Shove the target bar's left edge to 0% so the arrow tip (which lands on
+      # b's original left edge) now sits deep INSIDE the bar — a refX/offset
+      # style bug.
+      pierced =
+        Regex.replace(
+          ~r/(class="lg-bar[^"]*"\s+style="left: )[\d.]+(%; width: [\d.]+%"[^>]*phx-value-event-id="b")/,
+          html,
+          "\\g{1}0.0\\g{2}"
+        )
+
+      assert pierced != html, "expected the target-bar mutation to change the HTML"
+
+      assert_raise RuntimeError, ~r/assert_arrow_tips_clear_target_bars/, fn ->
+        TestHelpers.assert_arrow_tips_clear_target_bars(pierced)
+      end
+    end
+
+    test "assert_arrowheads_at_path_ends raises when the arrowhead drifts off the shaft end" do
+      html = simple_chain_html()
+
+      # Sanity: the pristine render passes.
+      assert :ok = TestHelpers.assert_arrowheads_at_path_ends(html)
+
+      # Move the arrowhead overlay's `top` far from the shaft's terminal y so
+      # the head no longer tracks the path end (the bug this detector guards).
+      drifted =
+        Regex.replace(
+          ~r/(class="lg-arrowhead[^"]*"\s+style="left: [\d.]+%; top: )\d+(px")/,
+          html,
+          "\\g{1}500\\g{2}"
+        )
+
+      assert drifted != html, "expected the arrowhead mutation to change the HTML"
+
+      assert_raise RuntimeError, ~r/assert_arrowheads_at_path_ends/, fn ->
+        TestHelpers.assert_arrowheads_at_path_ends(drifted)
+      end
+    end
+
+    test "assert_no_unrelated_bar_pierced raises when an unrelated bar sits on the trunk" do
+      # a(row 0) → c(row 2) trunk runs in a vertical column that crosses b's
+      # (row 1) y-band; b is unrelated and out of the trunk's x-column in the
+      # clean render. Force the row order with extra.order so the trunk actually
+      # spans b's row, then move b's bar onto the trunk's x-column so the
+      # vertical segment visibly cuts through it.
+      events = [
+        %LiveGantt.Task{
+          id: "a",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          color: "bg-primary",
+          extra: %{order: 1}
+        },
+        %LiveGantt.Task{
+          id: "b",
+          start: ~D[2026-04-15],
+          end: ~D[2026-04-20],
+          color: "bg-primary",
+          extra: %{order: 2}
+        },
+        %LiveGantt.Task{
+          id: "c",
+          start: ~D[2026-04-25],
+          end: ~D[2026-04-30],
+          color: "bg-primary",
+          extra: %{order: 3}
+        }
+      ]
+
+      html = TestHelpers.render_waterfall(events, connectors: [%{from: "a", to: "c"}])
+      assert :ok = TestHelpers.assert_no_unrelated_bar_pierced(html)
+
+      # Find the trunk x (mid of the forward path) and re-home b's bar so it
+      # straddles that column. Express the new left/width as % of content width.
+      geom = TestHelpers.inspect_waterfall(events, connectors: [%{from: "a", to: "c"}])
+      [conn] = geom.connectors
+      trunk_x = conn.segments.mid
+
+      [_, cw] = Regex.run(~r/min-width: (\d+)px/, html)
+      content_width = String.to_integer(cw)
+
+      # Left edge well west of the trunk, right edge well east → it straddles.
+      new_left_pct = (trunk_x - 20) / content_width * 100
+      new_width_pct = 40 / content_width * 100
+
+      pierced =
+        Regex.replace(
+          ~r/(class="lg-bar[^"]*"\s+style="left: )[\d.]+(%; width: )[\d.]+(%"[^>]*phx-value-event-id="b")/,
+          html,
+          "\\g{1}#{:erlang.float_to_binary(new_left_pct, decimals: 4)}\\g{2}#{:erlang.float_to_binary(new_width_pct, decimals: 4)}\\g{3}"
+        )
+
+      assert pierced != html, "expected the unrelated-bar mutation to change the HTML"
+
+      assert_raise RuntimeError, ~r/assert_no_unrelated_bar_pierced/, fn ->
+        TestHelpers.assert_no_unrelated_bar_pierced(pierced)
+      end
+    end
+
+    test "assert_lanes_evenly_spaced raises when one stagger lane's y is nudged off-grid" do
+      events = fanout_events()
+
+      html =
+        TestHelpers.render_waterfall(events,
+          connectors: fanout_connectors(),
+          bus_stagger_outgoing_px: 4
+        )
+
+      assert :ok = TestHelpers.assert_lanes_evenly_spaced(html, "h")
+
+      # Nudge exactly one source-attach y (the `M x y` of one h-path) by +7px so
+      # the lane spacings from h become uneven.
+      [target_path] =
+        Regex.run(~r/d="M \d+ \d+ H \d+ V \d+ H \d+"[^>]*data-from-id="h" data-to-id="t1"/, html)
+
+      [_, x, y] = Regex.run(~r/d="M (\d+) (\d+)/, target_path)
+      bumped = String.replace(target_path, "M #{x} #{y}", "M #{x} #{String.to_integer(y) + 7}")
+      uneven = String.replace(html, target_path, bumped)
+
+      assert uneven != html, "expected the lane mutation to change the HTML"
+
+      assert_raise RuntimeError, ~r/not evenly spaced/, fn ->
+        TestHelpers.assert_lanes_evenly_spaced(uneven, "h")
+      end
+    end
+  end
 end

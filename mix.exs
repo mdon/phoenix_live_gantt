@@ -16,13 +16,31 @@ defmodule LiveGantt.MixProject do
       deps: deps(),
       package: package(),
       docs: docs(),
+      aliases: aliases(),
       name: "LiveGantt",
       source_url: @source_url
     ]
   end
 
+  defp aliases do
+    [
+      precommit: [
+        "format",
+        "compile --warnings-as-errors --force",
+        "credo --strict",
+        "test"
+      ]
+    ]
+  end
+
   def application do
     [extra_applications: [:logger]]
+  end
+
+  # Run the whole `precommit` alias in :test (so its `mix test` step is happy and
+  # `credo`, which is in [:dev, :test], stays available).
+  def cli do
+    [preferred_envs: [precommit: :test]]
   end
 
   defp elixirc_paths(_), do: ["lib"]

@@ -39,12 +39,19 @@ defmodule LiveGantt.Utils.I18n do
     week: "Week",
     day: "Day",
     hour: "Hour",
+    min15: "15m",
+    min5: "5m",
     task: "Task",
     ungrouped: "Ungrouped",
     prev: "Previous",
     next: "Next",
     earlier_tasks: "%{count} earlier",
-    later_tasks: "%{count} later"
+    later_tasks: "%{count} later",
+    details_for: "Details for %{title}",
+    no_title: "(No title)",
+    expand_subproject: "Expand sub-project",
+    collapse_subproject: "Collapse sub-project",
+    today_scroll_disabled: "Set enable_hooks + id (or on_scroll_today) to enable scroll-to-today"
   }
 
   @type translations :: %{

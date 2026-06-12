@@ -49,8 +49,8 @@ defmodule LiveGantt do
 
   use Phoenix.Component
 
-  alias LiveGantt.Utils.{I18n, Safe}
   alias LiveGantt.PathFormat
+  alias LiveGantt.Utils.{I18n, Safe}
   alias Phoenix.LiveView.JS
 
   # Row heights in pixels (matches default row_height attr of "2.5rem" = 40px)
@@ -889,7 +889,7 @@ defmodule LiveGantt do
             disabled={not today_button_functional?(@on_scroll_today, @id, @enable_hooks)}
             title={
               if not today_button_functional?(@on_scroll_today, @id, @enable_hooks),
-                do: "Set enable_hooks + id (or on_scroll_today) to enable scroll-to-today"
+                do: I18n.label(:today_scroll_disabled, @translations)
             }
           >
             {I18n.label(:today, @translations)}
@@ -1101,11 +1101,12 @@ defmodule LiveGantt do
                     tree={@event_tree}
                     expanded={@expanded_set}
                     on_toggle={@on_toggle_expand}
+                    translations={@translations}
                   />
                   <%= if @label != [] do %>
                     {render_slot(@label, event)}
                   <% else %>
-                    <.default_label event={event} />
+                    <.default_label event={event} translations={@translations} />
                   <% end %>
                 </div>
 
@@ -1123,7 +1124,7 @@ defmodule LiveGantt do
                   data-popover-for={label_id}
                   phx-update="ignore"
                   role="dialog"
-                  aria-label={"Details for #{event.title}"}
+                  aria-label={I18n.label(:details_for, @translations, %{title: event.title})}
                 >
                   <div class={[
                     event.color || @bar_default_color_class,
@@ -1143,7 +1144,7 @@ defmodule LiveGantt do
                       ]}
                       style={"min-height: #{@row_px - 8}px"}
                     >
-                      {event.title || "(No title)"}
+                      {event.title || I18n.label(:no_title, @translations)}
                     </div>
                     <% label_subtitle = bar_subtitle(event) %>
                     <div
@@ -1156,7 +1157,13 @@ defmodule LiveGantt do
                       {label_subtitle}
                     </div>
                     <% label_actions =
-                      popover_actions(event, @event_tree, @expanded_set, @on_toggle_expand) %>
+                      popover_actions(
+                        event,
+                        @event_tree,
+                        @expanded_set,
+                        @on_toggle_expand,
+                        @translations
+                      ) %>
                     <div
                       :if={label_actions != []}
                       class={[
@@ -1241,7 +1248,13 @@ defmodule LiveGantt do
                 <div class={@row_class} style={"height: #{@row_px}px"}>
                   <% bar = bar_geometry(event, @view, @day_px, @min_bar_px) %>
                   <% actions =
-                    popover_actions(event, @event_tree, @expanded_set, @on_toggle_expand) %>
+                    popover_actions(
+                      event,
+                      @event_tree,
+                      @expanded_set,
+                      @on_toggle_expand,
+                      @translations
+                    ) %>
                   <% bar_id = bar_dom_id(@id, event.id) %>
                   <% popover_id = popover_dom_id(@id, event.id) %>
 
@@ -1259,6 +1272,9 @@ defmodule LiveGantt do
                       phx-click={@on_event_click}
                       phx-value-event-id={event.id}
                       phx-hook={@enable_hooks && "LgBarPopover"}
+                      tabindex={@enable_hooks && "0"}
+                      role={@enable_hooks && "button"}
+                      aria-haspopup={@enable_hooks && "dialog"}
                       data-popover-target={popover_id}
                       data-event-id={event.id}
                       data-group={get_group(event)}
@@ -1279,6 +1295,9 @@ defmodule LiveGantt do
                       phx-click={@on_event_click}
                       phx-value-event-id={event.id}
                       phx-hook={@enable_hooks && "LgBarPopover"}
+                      tabindex={@enable_hooks && "0"}
+                      role={@enable_hooks && "button"}
+                      aria-haspopup={@enable_hooks && "dialog"}
                       data-popover-target={popover_id}
                       data-event-id={event.id}
                       data-group={get_group(event)}
@@ -1323,7 +1342,7 @@ defmodule LiveGantt do
                           event.text_color || Safe.infer_text_color(event.color),
                           event.status == :cancelled && @bar_title_cancelled_class
                         ]}>
-                          {event.title || "(No title)"}
+                          {event.title || I18n.label(:no_title, @translations)}
                         </span>
                       <% end %>
                     </div>
@@ -1401,7 +1420,7 @@ defmodule LiveGantt do
                     data-popover-for={bar_id}
                     phx-update="ignore"
                     role="dialog"
-                    aria-label={"Details for #{event.title}"}
+                    aria-label={I18n.label(:details_for, @translations, %{title: event.title})}
                   >
                     <%!-- Colored wrapper: carries the bar's color +
                          text + status + custom class so BOTH the title
@@ -1427,7 +1446,7 @@ defmodule LiveGantt do
                         ]}
                         style={"min-height: #{@row_px - 8}px"}
                       >
-                        {event.title || "(No title)"}
+                        {event.title || I18n.label(:no_title, @translations)}
                       </div>
                       <% subtitle = bar_subtitle(event) %>
                       <div
@@ -1585,6 +1604,7 @@ defmodule LiveGantt do
   attr :tree, :map, required: true
   attr :expanded, :any, required: true
   attr :on_toggle, :any, required: true
+  attr :translations, :map, default: %{}
 
   defp subproject_chevron(assigns) do
     depth = depth_of(assigns.event.id, assigns.tree)
@@ -1615,7 +1635,11 @@ defmodule LiveGantt do
           :if={@is_sub}
           type="button"
           class="lg-subproject-chevron inline-flex items-center justify-center w-5 h-5 rounded bg-base-content/10 hover:bg-base-content/25 text-base-content cursor-pointer"
-          title={if @expanded?, do: "Collapse sub-project", else: "Expand sub-project"}
+          title={
+            if @expanded?,
+              do: I18n.label(:collapse_subproject, @translations),
+              else: I18n.label(:expand_subproject, @translations)
+          }
           phx-click={@on_toggle}
           phx-value-event-id={@event.id}
         >
@@ -1630,6 +1654,7 @@ defmodule LiveGantt do
   # -- Default label component --
 
   attr :event, LiveGantt.Task, required: true
+  attr :translations, :map, default: %{}
 
   defp default_label(assigns) do
     ~H"""
@@ -1644,7 +1669,7 @@ defmodule LiveGantt do
         "text-sm truncate flex-1",
         @event.status == :cancelled && "line-through text-base-content/50"
       ]}>
-        {@event.title || "(No title)"}
+        {@event.title || I18n.label(:no_title, @translations)}
       </span>
       <span
         :if={assignee(@event)}
@@ -2173,8 +2198,7 @@ defmodule LiveGantt do
           full_clean =
             candidate_trunks
             |> Enum.reject(&(&1 == f.mid))
-            |> Enum.filter(in_range)
-            |> Enum.filter(fn x -> not trunk_collides?(x, bars_in_span) end)
+            |> Enum.filter(fn x -> in_range.(x) and not trunk_collides?(x, bars_in_span) end)
             |> Enum.min_by(fn x -> abs(x - f.mid) end, fn -> nil end)
 
           cond do
@@ -2230,51 +2254,51 @@ defmodule LiveGantt do
     bars_below = bars_crossing_span(ctx.bars, y_at, y_bot, exclude)
     first_blocker = first_blocking_bar(current_x, bars_below)
 
-    cond do
-      is_nil(first_blocker) ->
-        # Clean to the end — emit final segment and stop.
-        Enum.reverse([{current_x, y_bot} | acc])
+    if is_nil(first_blocker) do
+      # Clean to the end — emit final segment and stop.
+      Enum.reverse([{current_x, y_bot} | acc])
+    else
+      # Switch column at the row-gap above the blocker.
+      switch_y = first_blocker.y_top - 2
 
-      true ->
-        # Switch column at the row-gap above the blocker.
-        switch_y = first_blocker.y_top - 2
+      if switch_y <= y_at do
+        # No room to switch — give up.
+        nil
+      else
+        remaining_bars = bars_crossing_span(ctx.bars, switch_y, y_bot, exclude)
 
-        if switch_y <= y_at do
-          # No room to switch — give up.
-          nil
+        # Need a column that is clean from switch_y..y_bot AND
+        # has a clear horizontal jog at switch_y from current_x.
+        next_x =
+          valid_xs
+          |> Enum.reject(&(&1 == current_x))
+          |> Enum.filter(fn x ->
+            not trunk_collides?(x, remaining_bars) and
+              jog_clear?(current_x, x, switch_y, ctx.bars, exclude)
+          end)
+          # Prefer the column closest to current_x so the jog is small.
+          |> Enum.min_by(fn x -> abs(x - current_x) end, fn -> nil end)
+
+        if next_x do
+          walk_segments(
+            next_x,
+            switch_y,
+            y_bot,
+            valid_xs,
+            ctx,
+            exclude,
+            row_px,
+            [{current_x, switch_y} | acc],
+            hops + 1
+          )
         else
-          remaining_bars = bars_crossing_span(ctx.bars, switch_y, y_bot, exclude)
-
-          # Need a column that is clean from switch_y..y_bot AND
-          # has a clear horizontal jog at switch_y from current_x.
-          next_x =
-            valid_xs
-            |> Enum.reject(&(&1 == current_x))
-            |> Enum.filter(fn x -> not trunk_collides?(x, remaining_bars) end)
-            |> Enum.filter(fn x -> jog_clear?(current_x, x, switch_y, ctx.bars, exclude) end)
-            # Prefer the column closest to current_x so the jog is small.
-            |> Enum.min_by(fn x -> abs(x - current_x) end, fn -> nil end)
-
-          if next_x do
-            walk_segments(
-              next_x,
-              switch_y,
-              y_bot,
-              valid_xs,
-              ctx,
-              exclude,
-              row_px,
-              [{current_x, switch_y} | acc],
-              hops + 1
-            )
-          else
-            # No clean column for the remainder; settle for partial
-            # routing and let the original piercing finish the path.
-            # Currently we just bail — but a deeper search could try
-            # different switch_ys here.
-            nil
-          end
+          # No clean column for the remainder; settle for partial
+          # routing and let the original piercing finish the path.
+          # Currently we just bail — but a deeper search could try
+          # different switch_ys here.
+          nil
         end
+      end
     end
   end
 
@@ -2305,9 +2329,7 @@ defmodule LiveGantt do
     # Each segment is {column_x, end_y_of_that_column}. The last
     # segment's end_y is y2.
     middle =
-      segments
-      |> Enum.map(fn {x, y} -> "H #{x} V #{y}" end)
-      |> Enum.join(" ")
+      Enum.map_join(segments, " ", fn {x, y} -> "H #{x} V #{y}" end)
 
     final_x = segments |> List.last() |> elem(0)
     d = "M #{x1} #{y1} #{middle} H #{stop}"
@@ -3152,6 +3174,12 @@ defmodule LiveGantt do
   # Offset for same-side trunks (SS/FF/SF). With no label, just the
   # elbow; with a label, at least half the label width plus clearance
   # so the trunk-centered label clears the nearest bar edge.
+  #
+  # Known limit: a WIDE label on an SS/SF connector whose source/target sits at
+  # the extreme left of the window can push the trunk past the `@axis_pad_px`
+  # (16px) left margin and clip. The pad covers the bare elbow stub, not an
+  # arbitrarily wide label; widen `date_range`/the window a touch, or shorten the
+  # label, if a left-edge labeled SS/SF connector clips.
   defp label_aware_offset(0, elbow), do: elbow
   defp label_aware_offset(label_w, elbow), do: max(elbow, div(label_w, 2) + @label_clearance_px)
 
@@ -4116,14 +4144,22 @@ defmodule LiveGantt do
   # popover state would smear across the duplicates. Raise loudly at
   # render-time instead of debugging visual glitches later.
   defp validate_event_ids!(events) do
-    {_seen, dups} =
-      Enum.reduce(events, {MapSet.new(), MapSet.new()}, fn ev, {seen, dups} ->
+    {_seen, dups, nil_id?} =
+      Enum.reduce(events, {MapSet.new(), MapSet.new(), false}, fn ev, {seen, dups, had_nil} ->
         cond do
-          is_nil(ev.id) -> {seen, dups}
-          MapSet.member?(seen, ev.id) -> {seen, MapSet.put(dups, ev.id)}
-          true -> {MapSet.put(seen, ev.id), dups}
+          is_nil(ev.id) -> {seen, dups, true}
+          MapSet.member?(seen, ev.id) -> {seen, MapSet.put(dups, ev.id), had_nil}
+          true -> {MapSet.put(seen, ev.id), dups, had_nil}
         end
       end)
+
+    if nil_id? do
+      raise ArgumentError, """
+      LiveGantt.gantt/1: an event has a `nil` id. Every event needs a unique,
+      non-nil `id` — connectors and `parent_id` reference it, and it forms the
+      bar/popover DOM ids (so multiple `nil` ids silently collide).
+      """
+    end
 
     case MapSet.to_list(dups) do
       [] ->
@@ -4834,7 +4870,7 @@ defmodule LiveGantt do
   # `on_toggle_expand` handler wired. The pseudo-action reuses the
   # same `bar_action_button` rendering, so it picks up the existing
   # `phx-value-event-id` plumbing and tooltip styling for free.
-  defp popover_actions(event, tree, expanded, on_toggle) do
+  defp popover_actions(event, tree, expanded, on_toggle, translations) do
     base = bar_actions(event)
 
     if sub_project?(event, tree) and on_toggle do
@@ -4843,7 +4879,11 @@ defmodule LiveGantt do
       toggle_action = %{
         id: "_subproject_toggle",
         icon: if(expanded?, do: "hero-minus-mini", else: "hero-plus-mini"),
-        tooltip: if(expanded?, do: "Collapse sub-project", else: "Expand sub-project"),
+        tooltip:
+          if(expanded?,
+            do: I18n.label(:collapse_subproject, translations),
+            else: I18n.label(:expand_subproject, translations)
+          ),
         phx_click: on_toggle
       }
 
@@ -5168,8 +5208,8 @@ defmodule LiveGantt do
   defp today_button_functional?(_on_scroll_today, id, enable_hooks),
     do: is_binary(id) and enable_hooks == true
 
-  defp zoom_label(:min5, _t), do: "5m"
-  defp zoom_label(:min15, _t), do: "15m"
+  defp zoom_label(:min5, t), do: I18n.label(:min5, t)
+  defp zoom_label(:min15, t), do: I18n.label(:min15, t)
   defp zoom_label(:hour, t), do: I18n.label(:hour, t)
   defp zoom_label(:day, t), do: I18n.label(:day, t)
   defp zoom_label(:week, t), do: I18n.label(:week, t)

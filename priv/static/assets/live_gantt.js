@@ -149,6 +149,30 @@
 
       this.el.addEventListener("click", this._onClick);
 
+      // Keyboard parity: the bar/milestone carries tabindex=0 + role=button, so
+      // Enter/Space must open the popover like a click. Only when the element
+      // ITSELF is focused (not a child action button, whose own handler fires).
+      this._onKeydown = (e) => {
+        if (e.target !== this.el) return;
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wasOpen = this._isOpen();
+        this._toggle();
+        if (!wasOpen) {
+          // Moved focus INTO the popover so Tab cycles its actions and Escape
+          // closes in context. Made programmatically focusable (tabindex -1).
+          const p = this._popover();
+          if (p) {
+            p.setAttribute("tabindex", "-1");
+            p.focus({ preventScroll: true });
+          }
+        } else {
+          this.el.focus({ preventScroll: true });
+        }
+      };
+      this.el.addEventListener("keydown", this._onKeydown);
+
       // Track this bar in the document-level registry so the global
       // outside-click handler can find every open popover and close
       // them in one pass.
@@ -165,6 +189,7 @@
 
     destroyed() {
       this.el.removeEventListener("click", this._onClick);
+      this.el.removeEventListener("keydown", this._onKeydown);
       window.LiveGanttHooks.LgBarPopover._bars.delete(this.el);
       // Do NOT clear `_activeBarByChart` here — the bar might be
       // re-mounting after a diff and we want `mounted()` to restore.
@@ -280,6 +305,11 @@
     _close() {
       const p = this._popover();
       if (!p) return;
+      // If focus is inside the popover (keyboard user closing via Escape),
+      // return it to the trigger so it isn't lost to <body>.
+      if (p.contains(document.activeElement)) {
+        this.el.focus({ preventScroll: true });
+      }
       p.classList.add("hidden");
       delete this.el.dataset.popoverOpen;
 
