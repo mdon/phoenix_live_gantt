@@ -70,6 +70,16 @@ standalone package.
 
 ### Features
 
+- **`LiveGantt.scroll_to_start/2` — scroll the timeline back to its start.** A
+  `Phoenix.LiveView.JS` command (composes with `JS.push/2`) that the
+  `LgAutoScroll` hook consumes (`lg:scroll-start`) to scroll the chart to its
+  leftmost column. Pair it with a "home"/"fit" button whose server handler
+  refits the window — the server can't move the scroll, and the built-in
+  scroll-to-today only fires when the today marker is in view, so a refit that
+  doesn't include today would otherwise leave the timeline parked at a stale
+  spot. A pending-flag in the hook makes the scroll authoritative across the
+  refit patch even when it moves the today marker (which would otherwise
+  re-center on today).
 - **`window_start` / `window_end` attrs — sub-day positioning window.** The
   positioning axis is normally `date_range`'s whole-day, midnight-to-midnight
   span. A consumer can now override the ORIGIN and SPAN with a pair of

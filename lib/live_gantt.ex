@@ -97,6 +97,26 @@ defmodule LiveGantt do
   def toggle_expanded(list, id) when is_list(list), do: toggle_expanded(MapSet.new(list), id)
 
   @doc """
+  A `Phoenix.LiveView.JS` command that scrolls a chart's timeline back to its
+  start (leftmost column). Pair it with a "home"/"fit" button whose server
+  handler refits the window — the server can't move the scroll, and the built-in
+  scroll-to-today only fires when the today marker is in view, so a refit that
+  doesn't include today would otherwise leave the timeline scrolled to a stale
+  spot. Requires `enable_hooks` + the matching `id` (the `LgAutoScroll` hook
+  listens for the dispatched `lg:scroll-start`).
+
+      <button phx-click={
+        JS.push("fit_project") |> LiveGantt.scroll_to_start("project-gantt-\#{@id}")
+      }>Project</button>
+
+  Composes with an existing `JS` command (e.g. a `JS.push/2`); pass it as the
+  first argument, or omit it to start a fresh command.
+  """
+  @spec scroll_to_start(JS.t(), String.t()) :: JS.t()
+  def scroll_to_start(js \\ %JS{}, id) when is_binary(id),
+    do: JS.dispatch(js, "lg:scroll-start", to: "##{id}")
+
+  @doc """
   Renders a waterfall/Gantt chart.
 
   ## Attributes

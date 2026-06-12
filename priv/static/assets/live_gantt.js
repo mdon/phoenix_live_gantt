@@ -27,6 +27,18 @@
       this._onScrollToday = () => this._scrollToToday(true);
       this.el.addEventListener("lg:scroll-today", this._onScrollToday);
 
+      // Scroll back to the timeline start (leftmost column). Fired by
+      // `LiveGantt.scroll_to_start/2` — e.g. a "fit to project" button whose
+      // refit may not include today, so scroll-to-today wouldn't fire. The
+      // `_pendingScrollStart` flag makes the post-patch `updated()` honor this
+      // even when the refit moves the today marker (which would otherwise
+      // re-center on today and override us).
+      this._onScrollStart = () => {
+        this._pendingScrollStart = true;
+        this.el.scrollTo({ left: 0, behavior: "smooth" });
+      };
+      this.el.addEventListener("lg:scroll-start", this._onScrollStart);
+
       // Seed the marker-position cache so `updated()` only re-scrolls
       // when the today marker actually MOVES (not on every unrelated
       // server patch).
@@ -40,8 +52,23 @@
     },
     destroyed() {
       this.el.removeEventListener("lg:scroll-today", this._onScrollToday);
+      this.el.removeEventListener("lg:scroll-start", this._onScrollStart);
     },
     updated() {
+      // A pending scroll-to-start wins this patch cycle: re-assert left:0 (the
+      // refit re-rendered after the click-time scroll) and seed the marker
+      // cache so the today-follow below doesn't immediately yank us off the
+      // start on the next unrelated patch.
+      if (this._pendingScrollStart) {
+        this._pendingScrollStart = false;
+        const marker = this.el.querySelector(".lg-today");
+        this._lastMarkerLeft = marker ? marker.style.left || "" : "";
+        requestAnimationFrame(() =>
+          this.el.scrollTo({ left: 0, behavior: "auto" }),
+        );
+        return;
+      }
+
       // Only re-scroll when the today marker actually moved (e.g.
       // date-range navigation shifts it). Without this check, every
       // unrelated LiveView patch (popover-open round-trips, expand /
