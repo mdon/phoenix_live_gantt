@@ -1419,15 +1419,13 @@ defmodule LiveGanttTest do
   end
 
   describe "connector tight-gap detour" do
-    test "forward FS with tight gap routes via 5-segment detour, milestone source exits at centre" do
+    test "forward FS with tight gap routes via 5-segment detour for full-length stems" do
       # Milestone source + 3 targets starting the SAME day (0-gap FS — the
       # source exit and target entry land at the same x). The straight
       # 3-segment shape has no room for clean exit + approach stems, so the
       # builder switches to the 5-segment detour: `M x1 y H stem_out V dy H
-      # stem_in V y2 H arrow_stop`. The milestone SOURCE attaches at the diamond
-      # centre with a ZERO exit stem (a fixed-viewbox stub there stretches with
-      # the responsive fill, so the connector would look a different size at every
-      # zoom); the bar TARGETS keep the full @elbow_px (10) approach stem.
+      # stem_in V y2 H arrow_stop`. Both stems get the full @elbow_px (10) of
+      # horizontal length.
       events = [
         %LiveGantt.Task{
           id: "ms",
@@ -1489,11 +1487,10 @@ defmodule LiveGanttTest do
       assert length(paths) == 3, "Expected 3 detour paths, got #{length(paths)}"
 
       Enum.each(paths, fn p ->
-        assert p.stem_out - p.x1 == 0,
-               "Expected 0px exit stem at milestone source, got #{p.stem_out - p.x1}"
+        assert p.stem_out - p.x1 == 10, "Expected 10px exit stem, got #{p.stem_out - p.x1}"
 
         assert p.arrow_stop - p.stem_in == 10,
-               "Expected 10px approach stem at bar target, got #{p.arrow_stop - p.stem_in}"
+               "Expected 10px approach stem, got #{p.arrow_stop - p.stem_in}"
       end)
 
       # Bus preserved: all three arrows share stem_out, detour_y, stem_in.

@@ -2590,12 +2590,7 @@ defmodule LiveGantt do
   # `consolidate_piercing_trunks` re-routes it.
   defp arrowhead_from_d(d) do
     %{x: tip_x, y: tip_y, dir: dir} = PathFormat.terminal(d)
-    # Pass the RAW final-segment direction through (`:east`/`:west`/`:north`/
-    # `:south`/`nil`). `arrowhead_geometry/5` always draws a horizontal head, but
-    # it needs to distinguish a genuine horizontal finish (nudge the milestone
-    # head out to the diamond edge) from a vertical/degenerate one (keep the head
-    # ON the shaft end, since there's no horizontal approach to nudge along).
-    {tip_x, tip_y, dir}
+    {tip_x, tip_y, if(dir == :west, do: :west, else: :east)}
   end
 
   # Precompute everything the overlay needs: the tip anchor (tip_x in px →
@@ -2612,33 +2607,24 @@ defmodule LiveGantt do
     size = if variant == :critical, do: 10, else: 8
     half = div(size, 2)
 
-    # Always a HORIZONTAL head (east/west). A vertical or degenerate finish —
-    # e.g. a milestone routed straight down its own column, ending on a
-    # zero-length `H` — has no horizontal direction, so default to east; the head
-    # sits AT the shaft end either way.
-    draw_dir = if dir == :west, do: :west, else: :east
-
     # Triangle drawn in a 0..size box; tip on the side it points toward, then the
     # svg is offset so that tip coincides with the (tip_x, tip_y) anchor.
     {d, base_off_x} =
-      case draw_dir do
+      case dir do
         :east -> {"M 0 0 L #{size} #{half} L 0 #{size} z", -size}
         :west -> {"M #{size} 0 L 0 #{half} L #{size} #{size} z", 0}
       end
 
-    # The container stays anchored on the shaft end (`tip_x`); for a milestone
+    # The container stays anchored on the shaft end (`tip_x`), but for a milestone
     # target we shift the drawn triangle OUT to the diamond's edge via the svg
-    # offset (fixed px, so it clears the fixed-px diamond at any fill). But ONLY
-    # when the shaft finishes horizontally — there's then a real approach segment
-    # for the head to ride. On a vertical/degenerate finish (a milestone routed
-    # down its own column) there's no horizontal room, so nudging would float the
-    # head off to the SIDE of the shaft; keep it on the shaft end instead.
+    # offset (a fixed px, so it clears the fixed-px diamond at any fill). The
+    # anchor staying on the shaft end keeps the head-meets-shaft invariant valid;
+    # only the visible triangle moves.
     nudge =
       cond do
         not target_milestone? -> 0
         dir == :east -> -@milestone_edge_px
-        dir == :west -> @milestone_edge_px
-        true -> 0
+        true -> @milestone_edge_px
       end
 
     %{
@@ -2662,17 +2648,6 @@ defmodule LiveGantt do
   # overrides (or fallbacks to ctx defaults) so individual builders see
   # a flat map rather than reaching into conn/ctx for every knob.
   defp build_route(conn, source_exit, target_entry, label_w, geom, ctx) do
-    # Between two milestones the connector is meant to be a straight vertical line
-    # (both ends attach at the diamond centre). Collision avoidance would jog its
-    # trunk sideways to dodge an intermediate diamond — but a diamond sits ABOVE
-    # the connector layer, so crossing one is harmless, and the dodge is a
-    # fixed-VIEWBOX horizontal step that stretches with the fill (breaking the
-    # render-the-same-at-every-zoom property). Default it off for milestone↔
-    # milestone connectors; an explicit per-connector `avoid_collisions` still
-    # wins.
-    both_milestones = milestone?(geom.from_event) and milestone?(geom.to_event)
-    default_avoid = if both_milestones, do: false, else: ctx.avoid_collisions
-
     %{
       exclude_ids: MapSet.new([geom.from_event.id, geom.to_event.id]),
       source_exit: source_exit,
@@ -2683,7 +2658,7 @@ defmodule LiveGantt do
       entry_stem: conn.entry_stem || ctx.elbow_px,
       detour_side: conn.detour_side,
       bar_clearance: conn.bar_clearance || ctx.bar_clearance_px,
-      avoid_collisions: resolve_bool(conn.avoid_collisions, default_avoid)
+      avoid_collisions: resolve_bool(conn.avoid_collisions, ctx.avoid_collisions)
     }
   end
 
@@ -3146,18 +3121,21 @@ defmodule LiveGantt do
     # so the leg's horizontal extent fits the label.
     label_w = Map.get(route, :label_width, 0)
     gap = arrow_stop - x1
-    # A milestone end attaches at the diamond CENTRE. Give it a ZERO stem so the
-    # detour doesn't bolt a fixed-VIEWBOX horizontal stub onto it — that stub
-    # stretches with the responsive fill (huge at a high fill factor like a tight
-    # `:hour` window, sub-pixel when scrolling like `:min5`), which is what made
-    # the same connector look wildly different across zooms. With both ends zeroed,
-    # two same-column milestones route as a pure VERTICAL line — and vertical
-    # segments don't stretch (only the x axis does), so the connector renders at
-    # the same size at every zoom. A real bar end keeps its normal stem.
-    base_exit = if milestone?(geom.from_event), do: 0, else: Map.get(route, :exit_stem, @elbow_px)
+    base_exit = Map.get(route, :exit_stem, @elbow_px)
 
+    # A milestone target's arrowhead is nudged @milestone_edge_px OUT to the
+    # diamond edge — a fixed SCREEN px. The head rides the final approach segment,
+    # so that segment (in VIEWBOX px) must be at least that long, or at a low fill
+    # factor (the `:min5` scroll case, where the approach renders ~1:1) the nudged
+    # head overshoots the trunk and floats off, disconnected. Give a milestone
+    # target an approach stem a hair longer than the nudge so the head always
+    # lands ON the shaft, at every zoom. (Longer paths at a high fill are fine.)
     base_entry =
-      if milestone?(geom.to_event), do: 0, else: Map.get(route, :entry_stem, @elbow_px)
+      if milestone?(geom.to_event) do
+        max(Map.get(route, :entry_stem, @elbow_px), @milestone_edge_px + 2)
+      else
+        Map.get(route, :entry_stem, @elbow_px)
+      end
 
     {exit_offset, entry_offset} =
       if label_w > 0 do
