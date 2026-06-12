@@ -26,6 +26,19 @@ standalone package.
 
 ### Fixes
 
+- Milestone connectors now render at a consistent size across zooms. A connector
+  touching a milestone bolted a fixed-VIEWBOX horizontal stub onto the diamond,
+  and that stub stretches with the responsive fill factor — so the SAME connector
+  looked wildly different at different zooms (a long horizontal tail at a tight
+  `:hour` window that fills ~4×, a sub-pixel stub when scrolling at `:min5`).
+  Milestone ends now attach at the diamond centre with a ZERO stem, so two
+  same-column milestones route as a pure VERTICAL line; vertical segments don't
+  stretch (only the x-axis does), so the connector is pixel-identical at every
+  zoom. Collision avoidance is also off by default for milestone↔milestone
+  connectors (dodging an intermediate diamond — which sits above the connector
+  layer anyway — would reintroduce a stretchy horizontal jog). Arrowheads stay
+  HORIZONTAL (east/west); on such a vertical finish the head sits on the shaft
+  end at the diamond rather than being nudged off to the side.
 - An open bar/label popover now sits above everything else in the chart
   (`z-[60]`). It was `z-40` — tying with milestone diamonds — and since rows are
   `position: relative` with no z-index (one shared stacking context), a popover
