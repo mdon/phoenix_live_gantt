@@ -165,6 +165,12 @@ defmodule LiveGantt do
 
   attr :show_progress, :boolean, default: true
   attr :show_today, :boolean, default: true
+
+  attr :show_today_edge, :boolean,
+    default: true,
+    doc:
+      "Show the floating directional `← Today` / `Today →` pill when today is off-screen. Independent of `show_today` (which controls the in-range today line), so you can keep the line but drop the off-screen hint."
+
   attr :show_connectors, :boolean, default: true
 
   attr :tiny_bar_px, :integer,
@@ -884,7 +890,7 @@ defmodule LiveGantt do
            the two never overlap. Clickable when `on_show_today` is wired
            (e.g. to widen the range / jump to today); otherwise informational. --%>
       <button
-        :if={@show_today and @today_offscreen == :before}
+        :if={@show_today and @show_today_edge and @today_offscreen == :before}
         type="button"
         class={["absolute left-2 z-40 lg-today-edge", @edge_indicator_class]}
         style={"top: #{edge_indicator_top_px(@show_header) + 32}px"}
@@ -895,7 +901,7 @@ defmodule LiveGantt do
         ← {I18n.label(:today, @translations)}
       </button>
       <button
-        :if={@show_today and @today_offscreen == :after}
+        :if={@show_today and @show_today_edge and @today_offscreen == :after}
         type="button"
         class={["absolute right-2 z-40 lg-today-edge", @edge_indicator_class]}
         style={"top: #{edge_indicator_top_px(@show_header) + 32}px"}
@@ -1827,21 +1833,6 @@ defmodule LiveGantt do
   # is the half-open `[fs, fe)`.
   defp out_of_range_frac?(fs, _fe, true, total_days), do: fs < 0 or fs >= total_days
   defp out_of_range_frac?(fs, fe, false, total_days), do: fe <= 0 or fs >= total_days
-
-  # True when the event has no overlap with the visible `date_range`.
-  # Milestones (zero-duration) are visible iff their single date sits
-  # inside `[range.first, range.last]`. Ranged events use half-open
-  # interval overlap: `[event_start, event_end)` ∩ `[range.first, range.last+1)`.
-  defp out_of_range?(event_start, _event_end, true, range) do
-    Date.compare(event_start, range.first) == :lt or
-      Date.compare(event_start, range.last) == :gt
-  end
-
-  defp out_of_range?(event_start, event_end, false, range) do
-    # Empty overlap iff event_end <= range.first OR event_start > range.last
-    Date.compare(event_end, range.first) != :gt or
-      Date.compare(event_start, range.last) == :gt
-  end
 
   # -- Connector path (orthogonal routing) --
   #
@@ -3889,25 +3880,33 @@ defmodule LiveGantt do
   end
 
   defp partition_events_by_range(events, range) do
-    Enum.reduce(events, {[], 0, 0}, fn event, {in_range, earlier, later} ->
-      event_start = to_date(event.start)
-      event_end = to_date(LiveGantt.Task.effective_end(event))
+    total_days = Date.diff(range.last, range.first) + 1
 
+    Enum.reduce(events, {[], 0, 0}, fn event, {in_range, earlier, later} ->
       cond do
         # Drop events missing a start date entirely — without it there
         # is nothing to position the bar against. Silent (no Logger
         # call) so a malformed task can't spam the host app's logs.
-        is_nil(event_start) or is_nil(event_end) ->
+        is_nil(event.start) or is_nil(LiveGantt.Task.effective_end(event)) ->
           {in_range, earlier, later}
 
         true ->
-          is_milestone = Date.diff(event_end, event_start) <= 0
+          # Use the SAME fractional-day overlap that `bar_geometry/4` uses, so
+          # partition and bar rendering agree on what's visible. The old
+          # date-truncated, half-open test dropped a task ending part-way through
+          # `range.first`'s day (e.g. a 25th→26th task viewed from the 26th):
+          # `to_date(end)` collapsed it to the 26th and `end <= range.first`
+          # excluded it, yet its bar clearly extends into the window. Fractional
+          # days keep it (and the bar clips it to the window's left edge).
+          fs = frac_days(event.start, range.first)
+          fe = frac_days(LiveGantt.Task.effective_end(event), range.first)
+          is_milestone = fe - fs <= 0
 
           cond do
-            not out_of_range?(event_start, event_end, is_milestone, range) ->
+            not out_of_range_frac?(fs, fe, is_milestone, total_days) ->
               {[event | in_range], earlier, later}
 
-            Date.compare(event_start, range.first) == :lt ->
+            fs < 0 ->
               {in_range, earlier + 1, later}
 
             true ->
