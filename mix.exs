@@ -3,7 +3,7 @@ defmodule PhoenixLiveGantt.MixProject do
 
   @version "0.1.0"
   @description "Phoenix LiveView Gantt chart with dependency arrows, sub-projects, and click-to-detail popovers"
-  @source_url "https://github.com/mdon/live_gantt"
+  @source_url "https://github.com/mdon/phoenix_live_gantt"
 
   def project do
     [
