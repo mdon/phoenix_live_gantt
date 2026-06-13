@@ -124,11 +124,11 @@ defmodule LiveGantt.Layout do
     {spans, cursor} = walk(Map.get(children, :__root__, []), start, ctx, 0, %{})
 
     # Honor the "every id appears" contract: any item the tree walk never reached
-    # — a `parent_id` cycle (a→b→a), a self-parent, or nesting past `@max_depth`
-    # — would otherwise be silently dropped, and the consumer's `layout[id]`
-    # MatchErrors far from the cause. Lay those out flat (no recursion), in order,
-    # appended after the main chain. Passing `depth: @max_depth` disables the
-    # sub-tree descent so a cycle can't re-trigger the same drop.
+    # — a `parent_id` cycle (a→b→a), a self-parent, nesting past `@max_depth`, or
+    # any descendant of one of those — would otherwise be silently dropped, and
+    # the consumer's `layout[id]` MatchErrors far from the cause. `lay_flat` lays
+    # them out flat (no recursion, so a cycle can't re-trigger the drop), in order,
+    # appended after the main chain.
     missing = Enum.reject(items, &Map.has_key?(spans, id_fun.(&1)))
     {spans, _cursor} = lay_flat(missing, cursor, ctx, spans)
     spans
@@ -173,12 +173,19 @@ defmodule LiveGantt.Layout do
           {child_acc, child_end} = walk(kids, cur, ctx, depth + 1, acc)
           {child_end, child_acc}
         else
-          # A leaf advances by its own duration. A depth-capped sub-project head
-          # (kids present, but we've stopped descending at @max_depth) may carry no
-          # usable duration — fall back to the cursor so `clamp_end` floors it to
-          # `min_span` rather than crashing on a nil duration.
-          dur = ctx.dur.(it)
-          span_end = if is_nil(dur), do: cur, else: ctx.advance.(cur, dur, it)
+          # Two ways to reach here. A genuine LEAF (no kids) advances strictly by
+          # its own duration — a nil/bad duration is a consumer data bug and
+          # should surface, not be silently masked into a 1-day placeholder. A
+          # depth-capped sub-project HEAD (kids present, but we stopped descending
+          # at @max_depth) has no usable duration of its own, so `flat_end` floors
+          # it to `min_span` (tolerating nil OR a raising accessor) instead of
+          # crashing. Cycle/self-parent heads are unreached and handled by
+          # `lay_flat`.
+          span_end =
+            if kids == [],
+              do: ctx.advance.(cur, ctx.dur.(it), it),
+              else: flat_end(ctx, cur, it)
+
           {span_end, acc}
         end
 

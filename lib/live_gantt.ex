@@ -1838,48 +1838,64 @@ defmodule LiveGantt do
   # through a day, not a midnight Date). `build_columns`/`sub_hour_columns`
   # enumerate whole days from a `Date.Range`; here we instead walk fixed
   # `minutes_per_slot` steps from the origin across the window span. Labels match
-  # the whole-day builders: the date on each midnight slot, a bare hour on
-  # `:hour` zoom, and the `:15` clock boundaries on sub-hour zooms (the in-between
-  # 5-minute gridlines stay blank). The consumer snaps `window_start` to a slot
-  # boundary so these labels land on round times.
+  # the whole-day builders: the date on each midnight (or day-or-coarser) slot, a
+  # bare hour on `:hour` zoom, and the `:15` clock boundaries on sub-hour zooms
+  # (the in-between 5-minute gridlines stay blank). The consumer snaps
+  # `window_start` to a slot boundary so these labels land on round times.
+  #
+  # `minutes_per_slot` may be sub-day (5/15/60) OR day-or-coarser (1440/10080/
+  # 43200) when a wide window's budget-capped granularity demotes. For the coarse
+  # slots we mirror the date-range `:day`/`:week`/`:month` builders: weekend
+  # shading only on day-or-finer slots, today-highlight by whole-day containment,
+  # and exact-tiling widths (cumulative rounding) so a multi-day slot doesn't
+  # leave a dead strip or compress the gridlines.
   defp window_columns(%NaiveDateTime{} = origin, span_days, day_px, minutes_per_slot, today, tr) do
-    # Width/count keyed straight off minutes (not slots-per-day), so a whole-day
-    # or coarser slot — used when a wide sub-day window's granularity demotes —
-    # works as well as a sub-hour one (slots-per-day would floor to 0 and divide).
-    col_px = max(round(day_px * minutes_per_slot / 1440), 1)
-    num_slots = max(round(span_days * 1440 / minutes_per_slot), 1)
+    inner_px = round(span_days * day_px)
+    slot_days = minutes_per_slot / 1440
+    num_slots = max(ceil(span_days / slot_days), 1)
     now = if match?(%DateTime{}, today) or match?(%NaiveDateTime{}, today), do: today, else: nil
+    today_date = to_date(today)
+    coarse? = minutes_per_slot >= 1440
+    slot_day_span = max(div(minutes_per_slot, 1440), 1)
 
     for i <- 0..(num_slots - 1) do
       slot_dt = NaiveDateTime.add(origin, i * minutes_per_slot, :minute)
       date = NaiveDateTime.to_date(slot_dt)
       minute_of_day = slot_dt.hour * 60 + slot_dt.minute
 
+      # Width = difference of rounded cumulative pixel positions, clamped to the
+      # content edge. Columns always sum to exactly `inner_px` — no half-slot
+      # drift, dead strip, or overflow even when a slot doesn't divide the span.
+      x0 = min(round(i * slot_days * day_px), inner_px)
+      x1 = min(round((i + 1) * slot_days * day_px), inner_px)
+
       label =
         cond do
-          # A day-or-coarser slot is one column per day (or week/month) — label
-          # each with its date, not a clock time.
-          minutes_per_slot >= 1440 ->
-            "#{I18n.month_name_short(date.month, tr)} #{date.day}"
+          coarse? -> "#{I18n.month_name_short(date.month, tr)} #{date.day}"
+          minute_of_day == 0 -> "#{I18n.month_name_short(date.month, tr)} #{date.day}"
+          minutes_per_slot == 60 -> "#{slot_dt.hour}"
+          rem(minute_of_day, 15) == 0 -> "#{slot_dt.hour}:#{pad2(slot_dt.minute)}"
+          true -> ""
+        end
 
-          minute_of_day == 0 ->
-            "#{I18n.month_name_short(date.month, tr)} #{date.day}"
-
-          minutes_per_slot == 60 ->
-            "#{slot_dt.hour}"
-
-          rem(minute_of_day, 15) == 0 ->
-            "#{slot_dt.hour}:#{pad2(slot_dt.minute)}"
-
-          true ->
-            ""
+      is_today =
+        if coarse? do
+          # The day-or-coarser slot highlights when today falls within its day
+          # span — `today_date == date` for a daily slot, "today's week/month" for
+          # week/month slots (matching the date-range builders' chunk containment).
+          diff = Date.diff(today_date, date)
+          diff >= 0 and diff < slot_day_span
+        else
+          slot_is_now?(date, minute_of_day, minutes_per_slot, now)
         end
 
       %{
         label: label,
-        width_px: col_px,
-        is_today: slot_is_now?(date, minute_of_day, minutes_per_slot, now),
-        non_working: Date.day_of_week(date) in [6, 7]
+        width_px: x1 - x0,
+        is_today: is_today,
+        # A multi-day (week/month) column isn't a weekend; only day-or-finer slots
+        # carry weekend shading, matching the date-range `:week`/`:month` builders.
+        non_working: minutes_per_slot <= 1440 and Date.day_of_week(date) in [6, 7]
       }
     end
   end

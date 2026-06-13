@@ -139,11 +139,15 @@
 
         // Clicks on the sub-project expand/collapse chevron must
         // pass through to LiveView's phx-click. We do NOT toggle
-        // the popover AND do NOT call stopPropagation, so the
-        // chevron's `phx-click` fires normally.
+        // the popover, so the chevron's `phx-click` fires normally.
         if (e.target.closest(".lg-subproject-chevron")) return;
 
-        e.stopPropagation();
+        // Deliberately DON'T stopPropagation: LiveView binds phx-click on the
+        // document (bubble phase), so stopping here would swallow the bar's own
+        // `on_event_click`. Letting the click bubble means a hooked bar fires
+        // `on_event_click` exactly like an un-hooked one. The just-opened popover
+        // survives the bubble because the global outside-click handler guards on
+        // `bar.contains` / `popover.contains` before closing anything.
         this._toggle();
       };
 
@@ -160,9 +164,9 @@
         // Dispatch a REAL click so keyboard activation is identical to a mouse
         // click: it toggles the popover (via `_onClick`) AND fires any phx-click
         // (`on_event_click`). Calling `_toggle()` directly would open the popover
-        // but silently skip the server event a mouse user gets. `_onClick` stops
-        // propagation, so this synthetic click won't reach the global
-        // outside-click handler (same as a mouse click).
+        // but silently skip the server event a mouse user gets. The synthetic
+        // click bubbles to the global outside-click handler just like a mouse
+        // click, which keeps the popover open via its containment guards.
         this.el.click();
         if (!wasOpen && this._isOpen()) {
           // Moved focus INTO the popover so Tab cycles its actions and Escape

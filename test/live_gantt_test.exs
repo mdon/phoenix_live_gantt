@@ -194,7 +194,10 @@ defmodule LiveGanttTest do
 
       assert html =~ "lg-today", "today marker should render for an overlapping day"
       [_, left] = Regex.run(~r/lg-today[^>]*left:\s*([\d.-]+)%/, html)
-      assert String.to_float(left) >= 0.0, "today marker clamped off-screen at left: #{left}%"
+      # Window 13:00–18:00 at :hour → content_width 182px (150px inner + 2×16 pad);
+      # noon clamps to the left axis pad (16px) → 16/182 ≈ 8.79%. A clamp-to-zero
+      # regression (or no clamp at all) would land elsewhere, so pin the value.
+      assert_in_delta String.to_float(left), 8.79, 0.2
     end
 
     test "renders with day zoom" do
@@ -1608,6 +1611,49 @@ defmodule LiveGanttTest do
       col_count = (html |> String.split("lg-col-header") |> length()) - 1
       # 60 day columns + 2 spacers — emphatically not 60×24 hourly columns.
       assert col_count in 60..64, "expected ~60 day columns, got #{col_count}"
+    end
+
+    test "a week-demoted NDT window: no weekend shading, partial slot kept, today by week (R2)" do
+      # Low density (day_width_px=20 → :week granularity) over a Saturday-origin
+      # NDT window. Every 7-day slot lands on a Saturday, so the old per-day
+      # weekend rule would shade ALL columns; a week slot must shade none. 65 days
+      # is 9.28 weeks → 10 columns (the partial last week kept, no dead strip).
+      # `today` falls in the first week, so that column highlights by containment.
+      events = [
+        %LiveGantt.Task{
+          id: "t",
+          title: "T",
+          start: ~N[2026-01-05 00:00:00],
+          end: ~N[2026-01-09 00:00:00]
+        }
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-01-03], ~D[2026-03-09]),
+        # 2026-01-03 is a Saturday.
+        ws: ~N[2026-01-03 00:00:00],
+        we: ~N[2026-03-09 00:00:00],
+        today: ~D[2026-01-07]
+      }
+
+      html =
+        render(~H[<.gantt
+  id="w3"
+  events={@events}
+  date_range={@range}
+  window_start={@ws}
+  window_end={@we}
+  today={@today}
+  day_width_px={20}
+/>])
+
+      col_count = (html |> String.split("lg-col-header") |> length()) - 1
+      assert col_count == 10, "expected 10 week columns (partial week kept), got #{col_count}"
+      refute html =~ "bg-base-content/[0.04]", "coarse (week) slots must not be weekend-shaded"
+      # The week containing today highlights (date-range :week parity), even though
+      # `today` is a bare Date with no time-of-day.
+      assert html =~ "font-bold text-primary", "today's week column should highlight"
     end
   end
 
@@ -4259,6 +4305,23 @@ defmodule LiveGanttTest do
         )
 
       assert Map.keys(result) |> Enum.sort() == ["a", "b", "c"]
+    end
+
+    test "a reachable leaf with a nil duration surfaces the bug, not a placeholder (R3)" do
+      # The flat fallback's nil/raise leniency is scoped to unreachable/degenerate
+      # items (cycles, over-depth heads). A healthy top-level leaf's nil duration
+      # is a consumer data bug and must surface — not be silently masked into a
+      # 1-day placeholder.
+      items = [%{id: "a", parent_id: nil, duration: nil}]
+
+      assert catch_error(
+               LiveGantt.Layout.sequential(items,
+                 start: ~D[2026-04-01],
+                 id: & &1.id,
+                 parent_id: & &1.parent_id,
+                 duration: & &1.duration
+               )
+             )
     end
   end
 
