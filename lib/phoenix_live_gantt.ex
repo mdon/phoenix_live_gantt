@@ -488,7 +488,11 @@ defmodule PhoenixLiveGantt do
     default:
       "absolute top-0 -translate-x-1/2 bg-error text-error-content text-[0.55rem] px-1 rounded-b font-bold whitespace-nowrap"
 
-  attr :translations, :map, default: %{}
+  attr :translations, :map,
+    default: %{},
+    doc:
+      "Overrides for the chart's own CHROME strings — toolbar buttons, the Today label, prev/next, edge counts, popover/expand labels, and short month names. Shape: `%{labels: %{atom => String.t()}, month_names_short: %{1..12 => String.t()}}`; anything omitted falls back to the English default. See `PhoenixLiveGantt.Utils.I18n` for the full key list. This does NOT translate task content (titles, assignees, action tooltips) — you pass those already-localized in each `PhoenixLiveGantt.Task`, so they work with any backend (gettext, Cldr, a JSONB multilang column, …)."
+
   attr :class, :string, default: ""
   attr :dir, :atom, default: :ltr
 
@@ -1506,6 +1510,7 @@ defmodule PhoenixLiveGantt do
                    not a triangle), so they render separately below. --%>
               <svg
                 :if={@connector_paths != []}
+                aria-hidden="true"
                 class="lg-connectors absolute top-0 left-0 pointer-events-none z-20 overflow-visible"
                 width="100%"
                 height={@content_height}
@@ -1590,6 +1595,7 @@ defmodule PhoenixLiveGantt do
                   data-to-id={p.to_id}
                 >
                   <svg
+                    aria-hidden="true"
                     class="absolute block overflow-visible"
                     width={p.arrow.size}
                     height={p.arrow.size}
@@ -1652,6 +1658,12 @@ defmodule PhoenixLiveGantt do
           :if={@is_sub}
           type="button"
           class="lg-subproject-chevron inline-flex items-center justify-center w-5 h-5 rounded bg-base-content/10 hover:bg-base-content/25 text-base-content cursor-pointer"
+          aria-expanded={to_string(@expanded?)}
+          aria-label={
+            if @expanded?,
+              do: I18n.label(:collapse_subproject, @translations),
+              else: I18n.label(:expand_subproject, @translations)
+          }
           title={
             if @expanded?,
               do: I18n.label(:collapse_subproject, @translations),
@@ -1660,7 +1672,10 @@ defmodule PhoenixLiveGantt do
           phx-click={@on_toggle}
           phx-value-event-id={@event.id}
         >
-          <span class={if @expanded?, do: "hero-minus-mini w-4 h-4", else: "hero-plus-mini w-4 h-4"}>
+          <span
+            aria-hidden="true"
+            class={if @expanded?, do: "hero-minus-mini w-4 h-4", else: "hero-plus-mini w-4 h-4"}
+          >
           </span>
         </button>
       </div>

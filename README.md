@@ -164,6 +164,139 @@ shows up on a wall-mounted dashboard with no refresh. Polling or a manual
 "refresh" button work identically — the component only cares that `events`
 changed.
 
+## Making it interactive
+
+By default the chart is **static** — bars render, but nothing is clickable.
+Interactivity is opt-in via `enable_hooks` (the JS bundle from step 1 must be
+registered) plus an `id`:
+
+```heex
+<PhoenixLiveGantt.gantt
+  id="project" events={@tasks} date_range={@range}
+  enable_hooks={true}
+  on_event_click="task_clicked"
+/>
+```
+
+`enable_hooks` turns on: click a bar/label to open its detail **popover** (with
+dependency-tree highlight), keyboard activation (Enter/Space open it, Escape
+closes and restores focus), and today auto-scroll.
+
+### Built-in toolbar
+
+`show_header={true}` renders a toolbar — zoom switcher, Today button, prev/next:
+
+```heex
+<PhoenixLiveGantt.gantt
+  id="project" events={@tasks} date_range={@range} today={@today}
+  show_header={true}
+  zooms={[:hour, :day, :week, :month]}   {!-- which zoom buttons appear --}
+  on_zoom_change="set_zoom"
+  on_navigate="navigate"
+/>
+```
+
+`show_zoom_switcher` / `show_today_button` / `show_navigation` hide individual
+pieces; the `:toolbar_start` / `:toolbar_end` slots drop your own controls in.
+
+### Server callbacks
+
+Each interaction is a plain `phx-click` you handle in your LiveView:
+
+| attr | fires when | param |
+| --- | --- | --- |
+| `on_event_click` | a bar/milestone is clicked | `%{"event-id" => id}` |
+| `on_toggle_expand` | a sub-project chevron is toggled | `%{"event-id" => id}` |
+| `on_zoom_change` | a zoom button is clicked | `%{"zoom" => "week"}` |
+| `on_navigate` | prev / next is clicked | `%{"direction" => "next"}` |
+| `on_show_earlier` / `on_show_later` | a "← N earlier / N later →" button | (no extra params) |
+| `on_show_today` | the off-screen "← Today" pill | (no extra params) |
+
+(The key is `"event-id"` with a **hyphen**.)
+
+### Popover actions & corner badges
+
+Per-task buttons and badges live on `extra`:
+
+```elixir
+%PhoenixLiveGantt.Task{
+  id: "build", title: "Build", start: ~D[2026-04-01], end: ~D[2026-04-05],
+  extra: %{
+    actions: [
+      %{icon: "hero-pencil", tooltip: "Edit",
+        phx_click: "edit", phx_value: %{id: "build"}},
+      %{icon: "hero-arrow-top-right-on-square", tooltip: "Open", href: "/tasks/build"}
+    ],
+    badges: [
+      %{content: "3", corner: :top_right, color: "bg-error"},   # e.g. a blocker count
+      %{content: "!", corner: :bottom_left, flash: true}
+    ]
+  }
+}
+```
+
+Actions render as buttons inside the click-popover (so they need `enable_hooks`);
+each takes `icon` (required) plus any of `tooltip`, `phx_click`, `phx_value`,
+`phx_target`, `href`, `class`. Badges pin to a `corner`
+(`:top_left | :top_right | :bottom_left | :bottom_right`, default `:top_right`)
+with optional `color`, `text_color`, `flash`, `class`.
+
+## Translations
+
+There are two layers, and they're deliberately separate:
+
+1. **Chrome** — the chart's own strings (toolbar buttons, the Today label,
+   prev/next, the "N earlier / later" counts, popover + expand/collapse labels,
+   and short month names). Pass a `translations` map; anything you omit falls
+   back to English. **No chrome text is hard-coded.**
+
+   ```elixir
+   translations = %{
+     labels: %{
+       today: "Aujourd'hui", week: "Semaine", day: "Jour", task: "Tâche",
+       prev: "Précédent", next: "Suivant",
+       earlier_tasks: "%{count} avant", later_tasks: "%{count} après"
+       # ... see PhoenixLiveGantt.Utils.I18n for the full key list
+     },
+     month_names_short: %{1 => "janv", 2 => "févr", 3 => "mars", ...}
+   }
+
+   <PhoenixLiveGantt.gantt events={@tasks} date_range={@range} translations={translations} />
+   ```
+
+2. **Content** — task titles, assignees, action tooltips. You pass these
+   **already localized** as plain strings in each `PhoenixLiveGantt.Task`. The
+   library never stores or resolves content, so it works with *any* backend:
+   gettext, [Cldr](https://hex.pm/packages/ex_cldr), or a **JSONB multilang
+   column** — resolve the string for the current locale however you already do,
+   and hand it over as `title`.
+
+   ```elixir
+   %PhoenixLiveGantt.Task{id: a.id, title: localized_title(a, @locale), ...}
+   ```
+
+So localization is fully in your control: chrome via one map, content via the
+strings you already produce.
+
+## Accessibility
+
+The chart is built for keyboard and screen-reader use when `enable_hooks` is on:
+
+- Bars, milestones, and label rows are focusable (`tabindex="0"`,
+  `role="button"`, `aria-haspopup="dialog"`); **Enter/Space** open the popover
+  (and fire `on_event_click`), **Escape** closes it and returns focus to the
+  trigger.
+- The popover is a `role="dialog"` with an `aria-label`; sub-project chevrons
+  expose `aria-expanded`; toolbar zoom buttons use `aria-pressed`; prev/next and
+  the edge buttons carry `aria-label`s. All these strings come from the
+  `translations` map, so they localize too.
+- The connector/arrow SVGs are decorative (`aria-hidden`), so a screen reader
+  walks the bars, not the geometry.
+
+Two things are on you: task **status is conveyed by bar color** — if that
+distinction matters to your users, encode it in the `title`/an action/a badge
+too (don't rely on color alone); and the geometry is **LTR-only** (see Gotchas).
+
 ## Dates → bars
 
 How a task's `start`/`end` become a bar — worth reading once, because `end`
@@ -311,6 +444,18 @@ consumer:
   purged. (See CSS step above — the #1 issue.)
 - **`end` is exclusive** → a one-day task needs `end = start + 1`, not `end =
   start` (which is a milestone diamond).
+- **Every event needs a unique, non-nil `id`** → a `nil` or duplicate id
+  **raises** (it would make connectors and popovers ambiguous). Validate your
+  data, don't feed raw rows in blind.
+- **An event with no `start` (or no resolvable end) is silently dropped** → it
+  doesn't render and isn't even counted in the edge indicators. Give every
+  event a `start`.
+- **`today` defaults to `Date.utc_today()`** → in a timezone-aware app, pass the
+  viewer's own `today`/now, or the today line lands on the wrong column for
+  non-UTC users.
+- **`window_start`/`window_end` are all-or-nothing** → set only one (or make
+  `window_end <= window_start`) and the whole sub-day window is silently
+  ignored, falling back to `date_range`.
 - **Sub-project children must always be in `events`** → emit the full tree;
   `expanded` controls visibility. Adding children only when expanded breaks
   the chevron.
