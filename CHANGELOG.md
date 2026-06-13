@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.1] — 2026-06-13
+
+Docs + accessibility. No API changes.
+
+### Added
+
+- Much-expanded README: "Making it interactive" (hooks, the built-in toolbar,
+  the `on_*` callback table, and the `extra.actions` / `extra.badges` shapes),
+  "Translations" (the chrome `translations` map vs. consumer-resolved content —
+  works with gettext, Cldr, or a JSONB multilang column), "Live updates", and
+  an "Accessibility" section. New Gotchas: nil/duplicate id raises, `today`
+  defaults to UTC, and `window_start`/`window_end` is all-or-nothing.
+- `:doc` for the `translations` attr.
+
+### Accessibility
+
+- Sub-project chevrons now expose `aria-expanded` (and an `aria-label`), so
+  screen readers announce expand/collapse state.
+- The decorative connector + arrowhead SVGs are `aria-hidden`, so a screen
+  reader walks the bars rather than the path geometry.
+
 ## [0.1.0] — 2026-06-13
 
 Initial release. Extracted from `live_calendar`'s waterfall view into a
