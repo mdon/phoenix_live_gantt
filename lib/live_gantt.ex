@@ -829,15 +829,20 @@ defmodule LiveGantt do
       <%!-- Self-contained fade rule used by the LgBarPopover hook
          when a popover opens — every bar/label/connector outside the
          active task's dependency tree gets `lg-faded` applied.
-         Combines opacity + grayscale so colored bars actually read as
-         "greyed out" (opacity alone leaves brand colors visible).
          Inline so the feature works even when consumers don't import
-         the package CSS. --%>
+         the package CSS.
+
+         Opacity ONLY — deliberately no `filter: grayscale`. A popover on a
+         large chart fades a few hundred elements at once; a per-element CSS
+         `filter` makes each its own compositor layer and repaints them on every
+         scroll frame (visible jank while a popover is open). `opacity` is
+         compositor-cheap and doesn't repaint on scroll, and at 0.3 a colored bar
+         already blends most of the way to the background, so it still reads as
+         "inactive" without the layer-explosion cost. --%>
       <style>
         .lg-faded {
           opacity: 0.3 !important;
-          filter: grayscale(70%) !important;
-          transition: opacity 150ms ease, filter 150ms ease;
+          transition: opacity 150ms ease;
         }
 
         /* Defensive guarantee: anything explicitly pinned by the
@@ -848,7 +853,6 @@ defmodule LiveGantt do
            selector does. */
         .lg-pinned {
           opacity: 1 !important;
-          filter: none !important;
         }
 
         /* Smooth slide for bottom-corner badges that the popover hook
