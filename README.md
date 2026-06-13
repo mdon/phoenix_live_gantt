@@ -5,6 +5,8 @@ dependency arrows between them, sub-projects with roll-up bars, corner
 badges, click-to-detail popovers, expand/collapse hierarchy, and a built-in
 geometry audit.
 
+<img width="1939" height="435" alt="image" src="https://github.com/user-attachments/assets/4a1a02e0-c3ac-4b78-88f2-432dbe2823a2" />
+
 The `gantt/1` component is **render-only**: you give it events with `start`/`end`
 **dates** and it draws bars, columns, connectors, and frames. It has no concept
 of durations, working hours, or scheduling. If your domain has *durations + an
