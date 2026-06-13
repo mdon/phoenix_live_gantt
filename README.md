@@ -131,6 +131,39 @@ JS dispatches are namespaced by it.
 See `PhoenixLiveGantt.gantt/1` for the full attr list (there are many styling hooks,
 all with sane defaults) and `PhoenixLiveGantt.Task` for all task fields.
 
+## Live updates
+
+It's a plain LiveView component, so it's **live for free**: re-assign `events`
+(or `connectors`) and it re-renders — LiveView diffs only what changed down to
+the client. There's no chart-specific update API, no `pushEvent`, nothing
+imperative. The geometry is percent-based (no JS re-measurement on every render)
+and the JS hooks restore popover/fade state across diffs, so even frequent
+updates don't flicker or drop an open popover.
+
+Where the data comes from is yours — the component is render-only and has no
+opinion about it. The usual pattern is `Phoenix.PubSub`: subscribe on connect,
+and on a broadcast reload the events and re-assign them.
+
+```elixir
+def mount(%{"id" => id}, _session, socket) do
+  if connected?(socket), do: Phoenix.PubSub.subscribe(MyApp.PubSub, "project:#{id}")
+
+  {:ok, assign(socket, id: id, events: load_events(id), connectors: load_connectors(id))}
+end
+
+# Anything that mutates the project broadcasts on that topic — this LiveView,
+# a controller, an Oban job, a console session; it doesn't matter.
+def handle_info({:project_changed, _id}, socket) do
+  id = socket.assigns.id
+  {:noreply, assign(socket, events: load_events(id), connectors: load_connectors(id))}
+end
+```
+
+Every connected viewer re-renders on the same broadcast, so one person's edit
+shows up on a wall-mounted dashboard with no refresh. Polling or a manual
+"refresh" button work identically — the component only cares that `events`
+changed.
+
 ## Dates → bars
 
 How a task's `start`/`end` become a bar — worth reading once, because `end`
