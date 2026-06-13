@@ -1,8 +1,8 @@
-defmodule LiveGantt.Layout do
+defmodule PhoenixLiveGantt.Layout do
   @moduledoc """
   Optional layout helper for the common "I have durations, not dates" case.
 
-  `LiveGantt.gantt/1` is render-only — it draws bars from `start`/`end` **dates**.
+  `PhoenixLiveGantt.gantt/1` is render-only — it draws bars from `start`/`end` **dates**.
   Many domains (project tasks, production steps, itineraries) instead have a
   *duration* + an *order* + maybe *nested sub-projects*, and no per-item dates.
   `sequential/2` does that translation once, correctly, so every consumer
@@ -16,7 +16,7 @@ defmodule LiveGantt.Layout do
 
   The calendar math — how a duration advances a date/time across weekends,
   working hours, or holidays — is **yours**, supplied via the `:advance`
-  callback. That keeps LiveGantt domain-agnostic: it never assumes what a
+  callback. That keeps PhoenixLiveGantt domain-agnostic: it never assumes what a
   "duration" means.
 
   Works at whatever resolution your `:start`/`:advance` use: pass `Date`s for a
@@ -28,12 +28,12 @@ defmodule LiveGantt.Layout do
   This is layout, not a scheduler. It does NOT do dependency-driven scheduling,
   critical path, resource leveling, "start no earlier than" / "must finish by"
   constraints, lag/lead, or working-hour models. If you need those, compute your
-  own dates and pass them to `LiveGantt.gantt/1` directly.
+  own dates and pass them to `PhoenixLiveGantt.gantt/1` directly.
 
   ## Example
 
       layout =
-        LiveGantt.Layout.sequential(assignments,
+        PhoenixLiveGantt.Layout.sequential(assignments,
           start: ~D[2026-06-01],
           id: & &1.uuid,
           parent_id: & &1.child_parent_uuid,
@@ -48,7 +48,7 @@ defmodule LiveGantt.Layout do
       events =
         Enum.map(assignments, fn a ->
           %{start: s, end: e} = layout[a.uuid]
-          %LiveGantt.Task{id: a.uuid, title: a.title, start: s, end: e, extra: %{parent_id: a.child_parent_uuid}}
+          %PhoenixLiveGantt.Task{id: a.uuid, title: a.title, start: s, end: e, extra: %{parent_id: a.child_parent_uuid}}
         end)
   """
 
@@ -62,7 +62,7 @@ defmodule LiveGantt.Layout do
   @doc """
   Lays `items` out into `%{id => %{start: Date.t(), end: Date.t()}}`.
 
-  `end` is exclusive, matching `LiveGantt.gantt/1` (a one-day bar is
+  `end` is exclusive, matching `PhoenixLiveGantt.gantt/1` (a one-day bar is
   `start..start+1`). Every id in `items` appears in the result, including
   sub-project parents (sized to span their children). Any item the tree walk
   can't reach from a root — one whose `parent_id` forms a cycle, points at
@@ -81,7 +81,7 @@ defmodule LiveGantt.Layout do
       whose parent id is `nil` (or not present among `items`) is a top-level
       root; an item that others point at via this is a sub-project.
     * `:duration` — `(item -> term)`. Default `& &1.duration`. The value is
-      opaque to LiveGantt and handed straight to `:advance`.
+      opaque to PhoenixLiveGantt and handed straight to `:advance`.
     * `:order` — `(item -> Enum.sort_by key)`. Default keeps input order
       (siblings are otherwise laid out in the order given).
     * `:advance` — `(start, duration, item -> end)` (a 2-arity

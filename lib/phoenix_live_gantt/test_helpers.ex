@@ -1,10 +1,10 @@
-defmodule LiveGantt.TestHelpers do
+defmodule PhoenixLiveGantt.TestHelpers do
   @moduledoc """
-  Render, inspect, and assert helpers for the LiveGantt view. Replaces
+  Render, inspect, and assert helpers for the PhoenixLiveGantt view. Replaces
   ad-hoc probe scripts with a one-line call. Used from tests, IEx, and
-  the `mix live_gantt.dump` task.
+  the `mix phoenix_live_gantt.dump` task.
 
-      events = [%LiveGantt.Task{id: "a", start: ~D[2026-04-01], end: ~D[2026-04-05]}]
+      events = [%PhoenixLiveGantt.Task{id: "a", start: ~D[2026-04-01], end: ~D[2026-04-05]}]
       html = render_waterfall(events)
       geom = inspect_waterfall(events)
       dump_waterfall(events)        # pretty-prints to stdout
@@ -31,15 +31,15 @@ defmodule LiveGantt.TestHelpers do
   use Phoenix.Component
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
 
-  alias LiveGantt.Inspector
-  alias LiveGantt.PathFormat
+  alias PhoenixLiveGantt.Inspector
+  alias PhoenixLiveGantt.PathFormat
 
   @doc """
-  Render the LiveGantt component with the given events and options.
+  Render the PhoenixLiveGantt component with the given events and options.
   All component attrs default to their declared defaults; opts override.
   Returns the rendered HTML string.
   """
-  @spec render_waterfall([LiveGantt.Task.t()], keyword()) :: String.t()
+  @spec render_waterfall([PhoenixLiveGantt.Task.t()], keyword()) :: String.t()
   def render_waterfall(events, opts \\ []) do
     range = Keyword.get(opts, :date_range) || derive_range(events)
 
@@ -50,11 +50,11 @@ defmodule LiveGantt.TestHelpers do
 
     assigns = %{attrs: attrs}
 
-    rendered_to_string(~H"<LiveGantt.gantt {@attrs} />")
+    rendered_to_string(~H"<PhoenixLiveGantt.gantt {@attrs} />")
   end
 
   @doc "Render then immediately inspect into a structured geometry map."
-  @spec inspect_waterfall([LiveGantt.Task.t()], keyword()) :: map()
+  @spec inspect_waterfall([PhoenixLiveGantt.Task.t()], keyword()) :: map()
   def inspect_waterfall(events, opts \\ []) do
     events |> render_waterfall(opts) |> Inspector.inspect_html()
   end
@@ -63,7 +63,7 @@ defmodule LiveGantt.TestHelpers do
   Render, inspect, and pretty-print to stdout. Returns the geometry map
   for further inspection.
   """
-  @spec dump_waterfall([LiveGantt.Task.t()], keyword()) :: map()
+  @spec dump_waterfall([PhoenixLiveGantt.Task.t()], keyword()) :: map()
   def dump_waterfall(events, opts \\ []) do
     geom = inspect_waterfall(events, opts)
     print_geometry(geom)
@@ -76,7 +76,7 @@ defmodule LiveGantt.TestHelpers do
     dates =
       events
       |> Enum.flat_map(fn e ->
-        [to_date(e.start), to_date(LiveGantt.Task.effective_end(e))]
+        [to_date(e.start), to_date(PhoenixLiveGantt.Task.effective_end(e))]
       end)
       |> Enum.reject(&is_nil/1)
 
@@ -212,7 +212,7 @@ defmodule LiveGantt.TestHelpers do
   headers shift the row stride.
 
   `:corner_inset_px` (default 4) — px to inset from bar's top/bottom
-  for the rounded-corner area. Defaults match LiveGantt's
+  for the rounded-corner area. Defaults match PhoenixLiveGantt's
   `bus_stagger_corner_clearance_px`.
   """
   def assert_source_attaches_inside_bar(html, opts \\ []) do
@@ -452,7 +452,7 @@ defmodule LiveGantt.TestHelpers do
 
   @doc """
   Assert that every detour path satisfies the geometric invariants
-  LiveGantt's stem-shifting logic relies on:
+  PhoenixLiveGantt's stem-shifting logic relies on:
 
     * `stem_out > x1` — source-side stem must be strictly east of the
       source bar's reference x (FS shape requirement).

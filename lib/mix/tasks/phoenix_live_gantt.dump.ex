@@ -1,16 +1,16 @@
-defmodule Mix.Tasks.LiveGantt.Dump do
-  @shortdoc "Dump structured geometry for a LiveGantt fixture (debug aid)"
+defmodule Mix.Tasks.PhoenixLiveGantt.Dump do
+  @shortdoc "Dump structured geometry for a PhoenixLiveGantt fixture (debug aid)"
 
   @moduledoc """
-  Render a named LiveGantt fixture and pretty-print its geometry to
+  Render a named PhoenixLiveGantt fixture and pretty-print its geometry to
   stdout. Use this to debug "what does this chart actually look like?"
   without running the dev server.
 
-      mix live_gantt.dump                    # list fixtures
-      mix live_gantt.dump simple
-      mix live_gantt.dump fanout
-      mix live_gantt.dump fanout --stagger 4
-      mix live_gantt.dump fanout --zoom day
+      mix phoenix_live_gantt.dump                    # list fixtures
+      mix phoenix_live_gantt.dump simple
+      mix phoenix_live_gantt.dump fanout
+      mix phoenix_live_gantt.dump fanout --stagger 4
+      mix phoenix_live_gantt.dump fanout --zoom day
 
   Options:
     --zoom day|week|month  (default: week)
@@ -26,8 +26,8 @@ defmodule Mix.Tasks.LiveGantt.Dump do
 
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
 
-  alias LiveGantt.Inspector
-  alias LiveGantt.TestHelpers
+  alias PhoenixLiveGantt.Inspector
+  alias PhoenixLiveGantt.TestHelpers
 
   @impl true
   def run(args) do
@@ -75,7 +75,7 @@ defmodule Mix.Tasks.LiveGantt.Dump do
                   7-way :ff fan-in, with cross-group critical chain.
                   Best for stress-testing real production scenarios.
 
-    Usage: mix live_gantt.dump <fixture_name> [--zoom week] [--stagger N] [--raw]
+    Usage: mix phoenix_live_gantt.dump <fixture_name> [--zoom week] [--stagger N] [--raw]
     """)
   end
 
@@ -190,7 +190,7 @@ defmodule Mix.Tasks.LiveGantt.Dump do
   end
 
   defp ev(id, start_d, end_d, opts \\ []) do
-    %LiveGantt.Task{
+    %PhoenixLiveGantt.Task{
       id: id,
       start: start_d,
       end: end_d,
@@ -636,7 +636,7 @@ defmodule Mix.Tasks.LiveGantt.Dump do
     Mix.shell().info("""
 
     ╔══════════════════════════════════════════════════
-    ║ LiveGantt fixture: #{name}
+    ║ PhoenixLiveGantt fixture: #{name}
     ║ zoom=#{zoom}  stagger=#{stagger}  range=#{range.first}..#{range.last}
     ║ expanded=#{format_expanded(expanded)}
     ╚══════════════════════════════════════════════════
@@ -715,11 +715,11 @@ defmodule Mix.Tasks.LiveGantt.Dump do
 
   # Render via the component-call syntax so attr defaults are injected
   # by Phoenix.Component's macro. Without this we'd have to maintain a
-  # full default-assigns map matching every LiveGantt attr.
+  # full default-assigns map matching every PhoenixLiveGantt attr.
   defp render(attrs) do
     assigns = %{attrs: attrs}
 
-    rendered_to_string(~H"<LiveGantt.gantt {@attrs} />")
+    rendered_to_string(~H"<PhoenixLiveGantt.gantt {@attrs} />")
   end
 
   defp derive_range(events) do
@@ -728,7 +728,7 @@ defmodule Mix.Tasks.LiveGantt.Dump do
       |> Enum.flat_map(fn e ->
         [
           to_date(e.start),
-          to_date(LiveGantt.Task.effective_end(e))
+          to_date(PhoenixLiveGantt.Task.effective_end(e))
         ]
       end)
 

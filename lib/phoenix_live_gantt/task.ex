@@ -1,4 +1,4 @@
-defmodule LiveGantt.Task do
+defmodule PhoenixLiveGantt.Task do
   @moduledoc """
   A Gantt task — one row in the chart, rendered as a horizontal bar
   on the time axis.
@@ -133,7 +133,7 @@ defmodule LiveGantt.Task do
   def effective_end(_), do: nil
 
   @doc """
-  Convenience constructor: `LiveGantt.Task.new("id", start_date, opts)`.
+  Convenience constructor: `PhoenixLiveGantt.Task.new("id", start_date, opts)`.
   """
   @spec new(term(), term(), keyword()) :: t()
   def new(id, start, opts \\ []) do

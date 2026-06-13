@@ -1,4 +1,4 @@
-defmodule LiveGantt.Utils.Safe do
+defmodule PhoenixLiveGantt.Utils.Safe do
   @moduledoc false
   # Defensive helpers used by the renderer — input sanitisation, css
   # value validation, and the daisyUI text-color inference.
@@ -15,7 +15,10 @@ defmodule LiveGantt.Utils.Safe do
     if Regex.match?(~r/^\d+(\.\d+)?\s*(px|rem|em|vh|vw|%|ch|ex|vmin|vmax)$/, value) do
       value
     else
-      Logger.warning("[LiveGantt] Invalid CSS dimension: #{inspect(value)}, using #{fallback}")
+      Logger.warning(
+        "[PhoenixLiveGantt] Invalid CSS dimension: #{inspect(value)}, using #{fallback}"
+      )
+
       fallback
     end
   end

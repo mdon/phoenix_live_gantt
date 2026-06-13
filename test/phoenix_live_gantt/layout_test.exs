@@ -1,7 +1,7 @@
-defmodule LiveGantt.LayoutTest do
+defmodule PhoenixLiveGantt.LayoutTest do
   use ExUnit.Case, async: true
 
-  alias LiveGantt.Layout
+  alias PhoenixLiveGantt.Layout
 
   defp item(id, duration, parent \\ nil, order \\ 0),
     do: %{id: id, duration: duration, parent: parent, order: order}

@@ -1,18 +1,18 @@
-defmodule LiveGanttTest do
+defmodule PhoenixLiveGanttTest do
   use ExUnit.Case, async: true
 
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
   import Phoenix.Component, only: [sigil_H: 2]
   import ExUnit.CaptureIO, only: [capture_io: 1]
-  import LiveGantt
+  import PhoenixLiveGantt
 
-  alias Mix.Tasks.LiveGantt.Dump
+  alias Mix.Tasks.PhoenixLiveGantt.Dump
 
   defp render(content), do: rendered_to_string(content)
 
   defp sample_events(base \\ ~D[2026-04-01]) do
     [
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t1",
         start: base,
         end: Date.add(base, 5),
@@ -21,7 +21,7 @@ defmodule LiveGanttTest do
         category: "Phase 1",
         extra: %{progress_pct: 80, assignee: "Alice", group: "Phase 1"}
       },
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t2",
         start: Date.add(base, 5),
         end: Date.add(base, 12),
@@ -30,7 +30,7 @@ defmodule LiveGanttTest do
         category: "Phase 1",
         extra: %{progress_pct: 30, group: "Phase 1"}
       },
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t3",
         start: Date.add(base, 12),
         end: Date.add(base, 20),
@@ -78,7 +78,7 @@ defmodule LiveGanttTest do
 
     test "renders progress fill" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-10],
@@ -99,7 +99,7 @@ defmodule LiveGanttTest do
       # The README quickstart sets these as struct fields; the renderer must read
       # them struct-first (with extra.* as the fallback).
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-10],
@@ -120,7 +120,7 @@ defmodule LiveGanttTest do
 
     test "renders milestones for zero-duration events" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "m1",
           start: ~D[2026-04-15],
           end: ~D[2026-04-15],
@@ -165,7 +165,7 @@ defmodule LiveGanttTest do
       # draw at a negative left% — off-screen with nothing to see. It must pin to
       # the window's near (left) edge instead.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           title: "T",
           start: ~N[2026-04-01 14:00:00],
@@ -204,7 +204,7 @@ defmodule LiveGanttTest do
       range = Date.range(~D[2026-04-01], ~D[2026-04-14])
 
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-07],
@@ -228,7 +228,7 @@ defmodule LiveGanttTest do
       range = Date.range(~D[2026-04-01], ~D[2026-09-30])
 
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-06-30],
@@ -248,14 +248,14 @@ defmodule LiveGanttTest do
 
     test "renders connector lines" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "First",
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-05],
           end: ~D[2026-04-10],
@@ -278,14 +278,14 @@ defmodule LiveGanttTest do
     test "styles backward (invalid) connectors differently" do
       # Target starts BEFORE source ends — an impossible/broken dependency
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-15],
           end: ~D[2026-04-25],
           title: "Source",
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-05],
           end: ~D[2026-04-10],
@@ -308,14 +308,14 @@ defmodule LiveGanttTest do
     test "uses normal style for forward connectors with gaps" do
       # Gap between source end and target start (e.g., vacation) — normal forward dep
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "Source",
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-20],
           end: ~D[2026-04-25],
@@ -344,7 +344,7 @@ defmodule LiveGanttTest do
 
     test "renders event with cancelled status" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-10],
@@ -364,7 +364,7 @@ defmodule LiveGanttTest do
 
     test "renders assignee in label" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -386,7 +386,7 @@ defmodule LiveGanttTest do
       # The reorder should place C right after A to minimize arrow crossings:
       # A, C, B, D.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -394,7 +394,7 @@ defmodule LiveGanttTest do
           color: "bg-primary",
           category: "Phase"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-02],
           end: ~D[2026-04-06],
@@ -402,7 +402,7 @@ defmodule LiveGanttTest do
           color: "bg-accent",
           category: "Phase"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-03],
           end: ~D[2026-04-08],
@@ -410,7 +410,7 @@ defmodule LiveGanttTest do
           color: "bg-secondary",
           category: "Phase"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "d",
           start: ~D[2026-04-10],
           end: ~D[2026-04-14],
@@ -445,19 +445,19 @@ defmodule LiveGanttTest do
       #   - h's incoming arrow → :in_above → attaches in the UPPER region of h's bar
       # So incoming y should be SMALLER (higher up) than outgoing y.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-04-05],
           end: ~D[2026-04-15],
           color: "bg-secondary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "h",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "out",
           start: ~D[2026-04-16],
           end: ~D[2026-04-20],
@@ -514,13 +514,13 @@ defmodule LiveGanttTest do
       # :in_above on target's west side. Each side has just one class →
       # both ends should attach at row center (no split).
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-08],
           end: ~D[2026-04-12],
@@ -548,19 +548,19 @@ defmodule LiveGanttTest do
       # Same hub setup as the smart-mode test, but pass bus_attach_mode={:type_zoned}.
       # Expected: outgoing always at TOP region of bar regardless of direction.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-04-05],
           end: ~D[2026-04-15],
           color: "bg-secondary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "h",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "out",
           start: ~D[2026-04-16],
           end: ~D[2026-04-20],
@@ -612,19 +612,19 @@ defmodule LiveGanttTest do
 
     test "center mode disables splits entirely" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-04-05],
           end: ~D[2026-04-15],
           color: "bg-secondary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "h",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "out",
           start: ~D[2026-04-16],
           end: ~D[2026-04-20],
@@ -667,25 +667,25 @@ defmodule LiveGanttTest do
       # on its own trunk x. Lane order is by target row position; lanes 0,1,2
       # get +0, +4, +8 px (east, since :fs source exit is east).
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "h",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-08],
           end: ~D[2026-04-10],
           color: "bg-accent"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-08],
           end: ~D[2026-04-10],
           color: "bg-accent"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t3",
           start: ~D[2026-04-08],
           end: ~D[2026-04-10],
@@ -731,19 +731,19 @@ defmodule LiveGanttTest do
 
     test "bus_stagger_outgoing_px=0 (default) merges fan-out arrows into one trunk" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "h",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-08],
           end: ~D[2026-04-10],
           color: "bg-accent"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-08],
           end: ~D[2026-04-10],
@@ -779,20 +779,20 @@ defmodule LiveGanttTest do
       # Component default = 5 (would normally stagger), but h has
       # extra.bus_stagger_outgoing_px = 0 → h's outgoing arrows merge.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "h",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary",
           extra: %{bus_stagger_outgoing_px: 0}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-08],
           end: ~D[2026-04-10],
           color: "bg-accent"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-08],
           end: ~D[2026-04-10],
@@ -833,20 +833,20 @@ defmodule LiveGanttTest do
       # Component default is :smart, but h has extra.bus_attach_mode={:center}
       # so h's attachments should be centered while other tasks aren't affected.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-04-05],
           end: ~D[2026-04-15],
           color: "bg-secondary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "h",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           color: "bg-primary",
           extra: %{bus_attach_mode: :center}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "out",
           start: ~D[2026-04-16],
           end: ~D[2026-04-20],
@@ -884,13 +884,13 @@ defmodule LiveGanttTest do
       # on different sides (outgoing east, incoming west). No same-side mix.
       # Attachment should stay at row center (~row.top + 20).
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-08],
           end: ~D[2026-04-12],
@@ -923,14 +923,14 @@ defmodule LiveGanttTest do
       # auto_place_group must use Date.compare semantics for dates that
       # cross month boundaries with day-of-month < the smaller-month dates.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "may",
           start: ~D[2026-05-14],
           end: ~D[2026-05-20],
           title: "May task",
           category: "Phase"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "july",
           start: ~D[2026-07-05],
           end: ~D[2026-07-10],
@@ -957,21 +957,21 @@ defmodule LiveGanttTest do
       # because it starts sooner. With critical-first sorting, C wins so
       # the critical chain stays on adjacent rows.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "A source",
           category: "Phase"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-03],
           end: ~D[2026-04-08],
           title: "B parallel",
           category: "Phase"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-05],
           end: ~D[2026-04-12],
@@ -1002,7 +1002,7 @@ defmodule LiveGanttTest do
 
     test "respects explicit extra.order override" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -1011,7 +1011,7 @@ defmodule LiveGanttTest do
           category: "Phase",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-05],
           end: ~D[2026-04-10],
@@ -1048,19 +1048,19 @@ defmodule LiveGanttTest do
     test "hides events entirely outside the visible date range" do
       # Visible range: April only. One event inside, two entirely outside.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           title: "Inside"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "before",
           start: ~D[2026-02-01],
           end: ~D[2026-02-10],
           title: "Way Before"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "after",
           start: ~D[2026-06-01],
           end: ~D[2026-06-10],
@@ -1083,7 +1083,7 @@ defmodule LiveGanttTest do
     test "partially-overlapping events clip but still render" do
       # Event starts before range, ends inside → should render as a clipped bar
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "clip",
           start: ~D[2026-03-25],
           end: ~D[2026-04-10],
@@ -1102,15 +1102,15 @@ defmodule LiveGanttTest do
 
     test "shows edge indicators with out-of-range counts" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           title: "Inside"
         },
-        %LiveGantt.Task{id: "b1", start: ~D[2026-02-01], end: ~D[2026-02-05], title: "B1"},
-        %LiveGantt.Task{id: "b2", start: ~D[2026-02-20], end: ~D[2026-02-25], title: "B2"},
-        %LiveGantt.Task{id: "a1", start: ~D[2026-05-01], end: ~D[2026-05-05], title: "A1"}
+        %PhoenixLiveGantt.Task{id: "b1", start: ~D[2026-02-01], end: ~D[2026-02-05], title: "B1"},
+        %PhoenixLiveGantt.Task{id: "b2", start: ~D[2026-02-20], end: ~D[2026-02-25], title: "B2"},
+        %PhoenixLiveGantt.Task{id: "a1", start: ~D[2026-05-01], end: ~D[2026-05-05], title: "A1"}
       ]
 
       range = Date.range(~D[2026-04-01], ~D[2026-04-30])
@@ -1127,13 +1127,13 @@ defmodule LiveGanttTest do
 
     test "skips connectors touching out-of-range events" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           title: "Inside"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "out",
           start: ~D[2026-06-01],
           end: ~D[2026-06-10],
@@ -1187,7 +1187,7 @@ defmodule LiveGanttTest do
       # 09:00–11:00 (2h) on day 0 of a 2-day range. At hour zoom day_px = 720
       # (30px/hour): left = 0.375*720 = 270, width = 2h = 60px.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           title: "Two hours",
           start: ~N[2026-04-01 09:00:00],
@@ -1228,7 +1228,7 @@ defmodule LiveGanttTest do
 
     test "day_width_px overrides the per-zoom density (fit-to-width)" do
       events = [
-        %LiveGantt.Task{id: "t", title: "X", start: ~D[2026-04-01], end: ~D[2026-04-02]}
+        %PhoenixLiveGantt.Task{id: "t", title: "X", start: ~D[2026-04-01], end: ~D[2026-04-02]}
       ]
 
       assigns = %{events: events, range: Date.range(~D[2026-04-01], ~D[2026-04-02])}
@@ -1248,10 +1248,10 @@ defmodule LiveGanttTest do
     end
 
     test "default_day_width_px/1 exposes the per-zoom defaults" do
-      assert LiveGantt.default_day_width_px(:hour) == 720
-      assert LiveGantt.default_day_width_px(:day) == 40
-      assert LiveGantt.default_day_width_px(:week) == 24
-      assert LiveGantt.default_day_width_px(:month) == 8
+      assert PhoenixLiveGantt.default_day_width_px(:hour) == 720
+      assert PhoenixLiveGantt.default_day_width_px(:day) == 40
+      assert PhoenixLiveGantt.default_day_width_px(:week) == 24
+      assert PhoenixLiveGantt.default_day_width_px(:month) == 8
     end
 
     test "today button is disabled when it can't actually scroll (no hooks, no handler)" do
@@ -1330,7 +1330,7 @@ defmodule LiveGanttTest do
 
     test "renders event color dot in default label" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -1358,7 +1358,7 @@ defmodule LiveGanttTest do
 
     test "renders progress at 100% with success color" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "done",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -1378,7 +1378,7 @@ defmodule LiveGanttTest do
 
     test "hides progress when show_progress is false" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-10],
@@ -1400,7 +1400,7 @@ defmodule LiveGanttTest do
     # A sub-day window over a DateTime task; date_range covers the same day.
     test "renders a task inside the window without crashing" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           title: "In window",
           start: ~N[2026-04-01 10:00:00],
@@ -1436,13 +1436,13 @@ defmodule LiveGanttTest do
     # before the window.
     test "an in-date_range but out-of-window task is excluded, not crashed" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "before",
           title: "Before window",
           start: ~N[2026-04-01 08:00:00],
           end: ~N[2026-04-01 09:00:00]
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "inside",
           title: "Inside window",
           start: ~N[2026-04-01 11:00:00],
@@ -1478,7 +1478,7 @@ defmodule LiveGanttTest do
     # bar out-of-range.
     test "a non-positive window falls back to date_range" do
       events = [
-        %LiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-01], end: ~D[2026-04-02]}
+        %PhoenixLiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-01], end: ~D[2026-04-02]}
       ]
 
       assigns = %{
@@ -1506,7 +1506,7 @@ defmodule LiveGanttTest do
       # treated as the whole day, so its line renders and no spurious "← Today"
       # edge pill appears — even though midnight sits before the 08:00 origin.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           title: "T",
           start: ~N[2026-04-01 10:00:00],
@@ -1545,7 +1545,7 @@ defmodule LiveGanttTest do
       # so a 2-day window yields 2 day columns — the WINDOW's span, not the 10-day
       # date_range's, and not an hourly smear (axis spacers carry no header class).
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           title: "T",
           start: ~N[2026-04-01 06:00:00],
@@ -1583,7 +1583,7 @@ defmodule LiveGanttTest do
       # 60-day window meant ~1440 two-pixel columns. The budget-capped granularity
       # (:day here) must drive the slot, giving ~60 day columns.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           title: "T",
           start: ~N[2026-04-01 06:00:00],
@@ -1620,7 +1620,7 @@ defmodule LiveGanttTest do
       # is 9.28 weeks → 10 columns (the partial last week kept, no dead strip).
       # `today` falls in the first week, so that column highlights by containment.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           title: "T",
           start: ~N[2026-01-05 00:00:00],
@@ -1660,14 +1660,14 @@ defmodule LiveGanttTest do
   describe "connector dependency types" do
     defp two_events(offset \\ 10) do
       [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "First",
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: Date.add(~D[2026-04-05], offset),
           end: Date.add(~D[2026-04-05], offset + 5),
@@ -1721,14 +1721,14 @@ defmodule LiveGanttTest do
       # Target starts before source — SS constraint violated, but its stems
       # both exit west so the path stays a clean 3-segment, unlike FS.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-15],
           end: ~D[2026-04-20],
           title: "Source",
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-05],
           end: ~D[2026-04-10],
@@ -1758,28 +1758,28 @@ defmodule LiveGanttTest do
       # stem_in V y2 H arrow_stop`. Both stems get the full @elbow_px (10) of
       # horizontal length.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "ms",
           start: ~D[2026-04-21],
           end: ~D[2026-04-21],
           color: "bg-accent",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-21],
           end: ~D[2026-04-30],
           color: "bg-primary",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-21],
           end: ~D[2026-05-02],
           color: "bg-primary",
           extra: %{order: 3}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-21],
           end: ~D[2026-04-28],
@@ -1838,13 +1838,13 @@ defmodule LiveGanttTest do
       # 5-day FS gap at week zoom = 5*24 - 2 = 118px. Plenty of room
       # for the 3-segment shape; detour should NOT fire.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -1870,9 +1870,24 @@ defmodule LiveGanttTest do
       # @milestone_edge_px (12) out, so a 10px approach strands it off the shaft.
       # The forward path must floor the approach at @milestone_edge_px + 2 = 14.
       events = [
-        %LiveGantt.Task{id: "s1", start: ~D[2026-04-01], end: ~D[2026-04-03], extra: %{order: 1}},
-        %LiveGantt.Task{id: "s2", start: ~D[2026-04-02], end: ~D[2026-04-04], extra: %{order: 2}},
-        %LiveGantt.Task{id: "m", start: ~D[2026-04-20], end: ~D[2026-04-20], extra: %{order: 3}}
+        %PhoenixLiveGantt.Task{
+          id: "s1",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-03],
+          extra: %{order: 1}
+        },
+        %PhoenixLiveGantt.Task{
+          id: "s2",
+          start: ~D[2026-04-02],
+          end: ~D[2026-04-04],
+          extra: %{order: 2}
+        },
+        %PhoenixLiveGantt.Task{
+          id: "m",
+          start: ~D[2026-04-20],
+          end: ~D[2026-04-20],
+          extra: %{order: 3}
+        }
       ]
 
       connectors = [%{from: "s1", to: "m"}, %{from: "s2", to: "m"}]
@@ -1905,8 +1920,18 @@ defmodule LiveGanttTest do
       # rather than a forward path with a sub-6px exit stem. day_width_px=18 makes
       # the 1-day gap 18px (< 20).
       events = [
-        %LiveGantt.Task{id: "s", start: ~D[2026-04-01], end: ~D[2026-04-05], extra: %{order: 1}},
-        %LiveGantt.Task{id: "m", start: ~D[2026-04-06], end: ~D[2026-04-06], extra: %{order: 2}}
+        %PhoenixLiveGantt.Task{
+          id: "s",
+          start: ~D[2026-04-01],
+          end: ~D[2026-04-05],
+          extra: %{order: 1}
+        },
+        %PhoenixLiveGantt.Task{
+          id: "m",
+          start: ~D[2026-04-06],
+          end: ~D[2026-04-06],
+          extra: %{order: 2}
+        }
       ]
 
       connectors = [%{from: "s", to: "m"}]
@@ -1926,13 +1951,13 @@ defmodule LiveGanttTest do
   describe "connector critical flag" do
     test "renders critical connector with primary stroke and critical marker" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-06],
           end: ~D[2026-04-10],
@@ -1953,13 +1978,13 @@ defmodule LiveGanttTest do
 
     test "invalid outranks critical — broken schedule stays red dashed" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-15],
           end: ~D[2026-04-25],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-05],
           end: ~D[2026-04-10],
@@ -1984,13 +2009,13 @@ defmodule LiveGanttTest do
   describe "connector labels" do
     test "renders label text when provided" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -2016,13 +2041,13 @@ defmodule LiveGanttTest do
       # the trunk can't fit it horizontally between the bars — should
       # switch to detour so the label rides the horizontal leg instead.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-06],
           end: ~D[2026-04-10],
@@ -2042,14 +2067,14 @@ defmodule LiveGanttTest do
 
     test "vertical label orientation renders a rotation transform" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-13],
           end: ~D[2026-04-18],
@@ -2075,21 +2100,21 @@ defmodule LiveGanttTest do
       # Long detour leg with a bar centered on the leg midpoint — the
       # label should slide away from the obstacle rather than sit on it.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-28],
           end: ~D[2026-04-30],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "obs",
           start: ~D[2026-04-10],
           end: ~D[2026-04-18],
           color: "bg-warning",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt",
           start: ~D[2026-04-05],
           end: ~D[2026-04-08],
@@ -2119,14 +2144,14 @@ defmodule LiveGanttTest do
 
     test "labeled SS pushes trunk further west so label clears source bar" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-13],
           end: ~D[2026-04-18],
@@ -2161,13 +2186,13 @@ defmodule LiveGanttTest do
 
     test "renders the background rect when label_background={:rect}" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -2189,13 +2214,13 @@ defmodule LiveGanttTest do
 
     test "omits the background rect by default (halo mode)" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -2214,13 +2239,13 @@ defmodule LiveGanttTest do
 
     test "omits rect and text element when no label given" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t2",
           start: ~D[2026-04-06],
           end: ~D[2026-04-10],
@@ -2241,13 +2266,13 @@ defmodule LiveGanttTest do
   describe "per-connector styling overrides" do
     defp two_forward_events do
       [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -2304,13 +2329,13 @@ defmodule LiveGanttTest do
   describe "component-level connector defaults" do
     test "connector_color_class changes default normal color" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -2340,13 +2365,13 @@ defmodule LiveGanttTest do
 
     test "per-connector override beats component default" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -2377,13 +2402,13 @@ defmodule LiveGanttTest do
     test "shape: :detour forces the 5-segment path even with a wide gap" do
       # 5-day gap is normally enough for 3-segment. shape: :detour forces detour.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -2403,14 +2428,14 @@ defmodule LiveGanttTest do
 
     test "detour_side: :above forces the detour above the source row even when target is below" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-20],
           end: ~D[2026-04-25],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-05],
           end: ~D[2026-04-10],
@@ -2437,14 +2462,14 @@ defmodule LiveGanttTest do
 
     test "exit_stem and entry_stem override the default elbow" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "s",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t",
           start: ~D[2026-04-20],
           end: ~D[2026-04-25],
@@ -2472,21 +2497,21 @@ defmodule LiveGanttTest do
     test "avoid_collisions: false disables per-connector collision shifts" do
       # Similar setup to the collision scenario but with per-connector override
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-01],
           end: ~D[2026-04-03],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "obstacle",
           start: ~D[2026-04-04],
           end: ~D[2026-04-18],
           color: "bg-warning",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt",
           start: ~D[2026-04-20],
           end: ~D[2026-04-25],
@@ -2512,7 +2537,7 @@ defmodule LiveGanttTest do
   describe "bar + row customization attrs" do
     test "bar_class and bar_default_color_class override defaults" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -2541,7 +2566,7 @@ defmodule LiveGanttTest do
 
     test "status_*_class attrs override status styling" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -2569,7 +2594,7 @@ defmodule LiveGanttTest do
 
     test "progress_complete_class overrides default complete-progress color" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "t1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-10],
@@ -2636,7 +2661,7 @@ defmodule LiveGanttTest do
 
     test "milestone_class and milestone_default_color_class override milestone styling" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "m1",
           start: ~D[2026-04-15],
           end: ~D[2026-04-15],
@@ -2666,13 +2691,13 @@ defmodule LiveGanttTest do
   describe "connector data attributes" do
     test "exposes from-id and to-id for hover-highlight CSS" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "from-abc",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "to-xyz",
           start: ~D[2026-04-06],
           end: ~D[2026-04-10],
@@ -2700,21 +2725,21 @@ defmodule LiveGanttTest do
       # extra.order pins rows so the topological reorder doesn't move
       # "tgt" adjacent to "src" (which would skip past the obstacle row).
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-01],
           end: ~D[2026-04-03],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "obstacle",
           start: ~D[2026-04-04],
           end: ~D[2026-04-18],
           color: "bg-warning",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt",
           start: ~D[2026-04-20],
           end: ~D[2026-04-25],
@@ -2779,28 +2804,28 @@ defmodule LiveGanttTest do
       # force the final vertical at stem_in through both obstacles;
       # detour_y must be pushed past obstacle2's bottom.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-30],
           end: ~D[2026-05-02],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "obstacle1",
           start: ~D[2026-04-10],
           end: ~D[2026-04-28],
           color: "bg-warning",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "obstacle2",
           start: ~D[2026-04-12],
           end: ~D[2026-04-26],
           color: "bg-accent",
           extra: %{order: 3}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt",
           start: ~D[2026-04-22],
           end: ~D[2026-04-25],
@@ -2834,28 +2859,28 @@ defmodule LiveGanttTest do
     test "backward arrow keeps preferred detour_y when no obstructions at stem_in" do
       # Obstacles don't extend far enough east to cover stem_in — no push.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src2",
           start: ~D[2026-04-30],
           end: ~D[2026-05-02],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "narrow1",
           start: ~D[2026-04-10],
           end: ~D[2026-04-14],
           color: "bg-warning",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "narrow2",
           start: ~D[2026-04-15],
           end: ~D[2026-04-18],
           color: "bg-accent",
           extra: %{order: 3}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt2",
           start: ~D[2026-04-22],
           end: ~D[2026-04-25],
@@ -2884,25 +2909,25 @@ defmodule LiveGanttTest do
       # Two consecutive bars fully cover the valid FS range — no shift
       # possible. Arrow should still render (not crash) with preferred mid_x.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-01],
           end: ~D[2026-04-03],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "wall1",
           start: ~D[2026-04-03],
           end: ~D[2026-04-12],
           color: "bg-warning"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "wall2",
           start: ~D[2026-04-12],
           end: ~D[2026-04-20],
           color: "bg-warning"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt",
           start: ~D[2026-04-20],
           end: ~D[2026-04-25],
@@ -2928,25 +2953,30 @@ defmodule LiveGanttTest do
       # down. Without lane staggering their detour segments would lie
       # exactly on top of each other.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-20],
           end: ~D[2026-04-30],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-accent"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-06],
           end: ~D[2026-04-10],
           color: "bg-secondary"
         },
-        %LiveGantt.Task{id: "c", start: ~D[2026-04-11], end: ~D[2026-04-15], color: "bg-info"}
+        %PhoenixLiveGantt.Task{
+          id: "c",
+          start: ~D[2026-04-11],
+          end: ~D[2026-04-15],
+          color: "bg-info"
+        }
       ]
 
       connectors = [
@@ -2972,7 +3002,7 @@ defmodule LiveGanttTest do
 
   describe "bar popover (per-event actions)" do
     defp event_with_actions(actions) do
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t1",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -2983,7 +3013,7 @@ defmodule LiveGanttTest do
     end
 
     defp event_no_actions do
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t2",
         start: ~D[2026-04-12],
         end: ~D[2026-04-18],
@@ -3145,7 +3175,7 @@ defmodule LiveGanttTest do
     end
 
     test "non-list actions are ignored without crashing" do
-      bad_event = %LiveGantt.Task{
+      bad_event = %PhoenixLiveGantt.Task{
         id: "weird",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3185,7 +3215,7 @@ defmodule LiveGanttTest do
     end
 
     test "popover title row inherits the bar's color class" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tcolor",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3211,7 +3241,7 @@ defmodule LiveGanttTest do
     end
 
     test "popover wrapper inherits status, text_color, and event.class" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tstatus",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3249,7 +3279,7 @@ defmodule LiveGanttTest do
     end
 
     test "cancelled status applies opacity + line-through to popover title" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tcancelled",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3284,7 +3314,7 @@ defmodule LiveGanttTest do
     end
 
     test "subtitle shows assignee + progress when both relevant" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tsub",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3306,7 +3336,7 @@ defmodule LiveGanttTest do
     end
 
     test "subtitle shows assignee only when no progress" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tsub2",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3326,7 +3356,7 @@ defmodule LiveGanttTest do
     end
 
     test "subtitle hidden when neither assignee nor progress is set" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tsub3",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3343,7 +3373,7 @@ defmodule LiveGanttTest do
     end
 
     test "subtitle hidden when progress is 0 (not relevant)" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tsub4",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3361,7 +3391,7 @@ defmodule LiveGanttTest do
     end
 
     test "label column row also gets a popover (same shape as bar)" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "twolab",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3414,7 +3444,7 @@ defmodule LiveGanttTest do
     end
 
     test "bar badge renders as sibling with content + color + flash" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tbadge",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3445,7 +3475,7 @@ defmodule LiveGanttTest do
     end
 
     test "action button can carry a single :badge or list :badges" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tactbadge",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3473,7 +3503,7 @@ defmodule LiveGanttTest do
     end
 
     test "non-list event badges are silently ignored" do
-      bad = %LiveGantt.Task{
+      bad = %PhoenixLiveGantt.Task{
         id: "tbadbadge",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3491,7 +3521,7 @@ defmodule LiveGanttTest do
     end
 
     test "disabled action renders as <span>, not <button>, and drops phx-click" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tdisabled",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3530,7 +3560,7 @@ defmodule LiveGanttTest do
     end
 
     test "disabled action with :href doesn't render an anchor (no link)" do
-      ev = %LiveGantt.Task{
+      ev = %PhoenixLiveGantt.Task{
         id: "tdisabledlink",
         start: ~D[2026-04-05],
         end: ~D[2026-04-10],
@@ -3584,14 +3614,14 @@ defmodule LiveGanttTest do
 
       [
         # Parent has no end → rolled up from children
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "p",
           start: base,
           end: nil,
           title: "Build wooden table",
           color: "bg-accent"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c1",
           start: Date.add(base, 0),
           end: Date.add(base, 3),
@@ -3599,7 +3629,7 @@ defmodule LiveGanttTest do
           color: "bg-accent",
           extra: %{parent_id: "p"}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c2",
           start: Date.add(base, 3),
           end: Date.add(base, 6),
@@ -3607,7 +3637,7 @@ defmodule LiveGanttTest do
           color: "bg-accent",
           extra: %{parent_id: "p"}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c3",
           start: Date.add(base, 6),
           end: Date.add(base, 9),
@@ -3665,15 +3695,15 @@ defmodule LiveGanttTest do
     test "child indentation increases with nesting depth" do
       # Two levels: p → c1 (depth 1), c1 → grandchild (depth 2)
       events = [
-        %LiveGantt.Task{id: "p", start: ~D[2026-04-01], end: nil, title: "Top"},
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{id: "p", start: ~D[2026-04-01], end: nil, title: "Top"},
+        %PhoenixLiveGantt.Task{
           id: "c1",
           start: ~D[2026-04-01],
           end: nil,
           title: "Mid",
           extra: %{parent_id: "p"}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "g1",
           start: ~D[2026-04-01],
           end: ~D[2026-04-03],
@@ -3727,15 +3757,15 @@ defmodule LiveGanttTest do
 
     test "sub-day children roll up to a parent BAR, not a midnight milestone" do
       events = [
-        %LiveGantt.Task{id: "p", start: nil, end: nil, title: "Parent"},
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{id: "p", start: nil, end: nil, title: "Parent"},
+        %PhoenixLiveGantt.Task{
           id: "c1",
           start: ~N[2026-04-01 10:00:00],
           end: ~N[2026-04-01 12:00:00],
           title: "C1",
           extra: %{parent_id: "p"}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c2",
           start: ~N[2026-04-01 12:00:00],
           end: ~N[2026-04-01 14:00:00],
@@ -3758,7 +3788,7 @@ defmodule LiveGanttTest do
       events =
         parent_with_children() ++
           [
-            %LiveGantt.Task{
+            %PhoenixLiveGantt.Task{
               id: "external",
               start: ~D[2026-04-12],
               end: ~D[2026-04-14],
@@ -3833,21 +3863,21 @@ defmodule LiveGanttTest do
   describe "input edge cases (regression tests for crash bugs)" do
     test "cyclic parent_id chain renders without hanging" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "A",
           extra: %{parent_id: "b"}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "B",
           extra: %{parent_id: "c"}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -3872,7 +3902,7 @@ defmodule LiveGanttTest do
 
     test "self-referential parent_id doesn't hang" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "loop",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -3895,13 +3925,13 @@ defmodule LiveGanttTest do
 
     test "event with nil start is silently dropped (no FunctionClauseError)" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "good",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "Good"
         },
-        %LiveGantt.Task{id: "bad", start: nil, title: "Bad"}
+        %PhoenixLiveGantt.Task{id: "bad", start: nil, title: "Bad"}
       ]
 
       assigns = %{events: events, range: sample_range()}
@@ -3915,13 +3945,13 @@ defmodule LiveGanttTest do
 
     test "duplicate event ids raise with a clear message" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "dup",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "First"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "dup",
           start: ~D[2026-04-06],
           end: ~D[2026-04-10],
@@ -3939,21 +3969,21 @@ defmodule LiveGanttTest do
   describe "sub-project rollup ordering" do
     test "parent with nil dates survives partition when children are in-range" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "p",
           start: nil,
           end: nil,
           title: "Parent",
           extra: %{children: true}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c1",
           start: ~D[2026-04-02],
           end: ~D[2026-04-06],
           title: "Child 1",
           extra: %{parent_id: "p"}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c2",
           start: ~D[2026-04-08],
           end: ~D[2026-04-15],
@@ -3978,13 +4008,13 @@ defmodule LiveGanttTest do
   describe "expanded: :all" do
     test "expands every sub-project in the input" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "p",
           start: ~D[2026-04-01],
           end: ~D[2026-04-30],
           title: "Parent"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-02],
           end: ~D[2026-04-06],
@@ -4039,14 +4069,14 @@ defmodule LiveGanttTest do
 
   describe "toggle_expanded/2" do
     test "adds an absent id and removes a present one in a MapSet" do
-      assert LiveGantt.toggle_expanded(MapSet.new(), "a") == MapSet.new(["a"])
-      assert LiveGantt.toggle_expanded(MapSet.new(["a", "b"]), "a") == MapSet.new(["b"])
+      assert PhoenixLiveGantt.toggle_expanded(MapSet.new(), "a") == MapSet.new(["a"])
+      assert PhoenixLiveGantt.toggle_expanded(MapSet.new(["a", "b"]), "a") == MapSet.new(["b"])
     end
 
     test "normalizes nil and lists to a MapSet" do
-      assert LiveGantt.toggle_expanded(nil, "a") == MapSet.new(["a"])
-      assert LiveGantt.toggle_expanded(["a"], "b") == MapSet.new(["a", "b"])
-      assert LiveGantt.toggle_expanded(["a", "b"], "a") == MapSet.new(["b"])
+      assert PhoenixLiveGantt.toggle_expanded(nil, "a") == MapSet.new(["a"])
+      assert PhoenixLiveGantt.toggle_expanded(["a"], "b") == MapSet.new(["a", "b"])
+      assert PhoenixLiveGantt.toggle_expanded(["a", "b"], "a") == MapSet.new(["b"])
     end
   end
 
@@ -4055,7 +4085,7 @@ defmodule LiveGanttTest do
     # true width of round((1/24) * 8) = 0px. content_width = round(60 * 8) +
     # 2 * 16 = 512px, so the 4px floor renders as 4/512 = 0.7813%.
     defp tiny_task do
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "tiny",
         title: "Tiny",
         start: ~N[2026-04-01 09:00:00],
@@ -4101,7 +4131,7 @@ defmodule LiveGanttTest do
     defp one_day_range, do: Date.range(~D[2026-04-01], ~D[2026-04-01])
 
     defp two_hour_task do
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t",
         title: "T",
         start: ~N[2026-04-01 00:00:00],
@@ -4158,7 +4188,7 @@ defmodule LiveGanttTest do
     end
   end
 
-  describe "mix live_gantt.dump (M8 coverage)" do
+  describe "mix phoenix_live_gantt.dump (M8 coverage)" do
     test "runs without raising for a built-in fixture and prints geometry" do
       output =
         capture_io(fn ->
@@ -4175,14 +4205,24 @@ defmodule LiveGanttTest do
       # The dump renders a fixture and runs it through Inspector.inspect_html;
       # assert that shape carries the geometry keys the task relies on.
       events = [
-        %LiveGantt.Task{id: "a", start: ~D[2026-05-01], end: ~D[2026-05-06], color: "bg-primary"},
-        %LiveGantt.Task{id: "b", start: ~D[2026-05-07], end: ~D[2026-05-11], color: "bg-primary"}
+        %PhoenixLiveGantt.Task{
+          id: "a",
+          start: ~D[2026-05-01],
+          end: ~D[2026-05-06],
+          color: "bg-primary"
+        },
+        %PhoenixLiveGantt.Task{
+          id: "b",
+          start: ~D[2026-05-07],
+          end: ~D[2026-05-11],
+          color: "bg-primary"
+        }
       ]
 
       html =
-        LiveGantt.TestHelpers.render_waterfall(events, connectors: [%{from: "a", to: "b"}])
+        PhoenixLiveGantt.TestHelpers.render_waterfall(events, connectors: [%{from: "a", to: "b"}])
 
-      geom = LiveGantt.Inspector.inspect_html(html)
+      geom = PhoenixLiveGantt.Inspector.inspect_html(html)
 
       for key <- [:rows, :bars, :connectors, :arrowheads, :edges] do
         assert Map.has_key?(geom, key), "expected geometry key #{inspect(key)}"
@@ -4199,7 +4239,7 @@ defmodule LiveGanttTest do
       range = Date.range(~D[2026-04-01], ~D[2026-04-30])
 
       events = [
-        %LiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-05], end: ~D[2026-04-10]}
+        %PhoenixLiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-05], end: ~D[2026-04-10]}
       ]
 
       assigns = %{events: events, range: range}
@@ -4220,7 +4260,7 @@ defmodule LiveGanttTest do
       range = Date.range(~D[2026-04-01], ~D[2026-04-30])
 
       events = [
-        %LiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-05], end: ~D[2026-04-10]}
+        %PhoenixLiveGantt.Task{id: "t", title: "T", start: ~D[2026-04-05], end: ~D[2026-04-10]}
       ]
 
       assigns = %{events: events, range: range}
@@ -4250,7 +4290,7 @@ defmodule LiveGanttTest do
       ]
 
       result =
-        LiveGantt.Layout.sequential(items,
+        PhoenixLiveGantt.Layout.sequential(items,
           start: ~D[2026-04-01],
           id: & &1.id,
           parent_id: & &1.parent_id,
@@ -4274,7 +4314,7 @@ defmodule LiveGanttTest do
       ]
 
       result =
-        LiveGantt.Layout.sequential(items,
+        PhoenixLiveGantt.Layout.sequential(items,
           start: ~D[2026-04-01],
           id: & &1.id,
           parent_id: & &1.parent_id,
@@ -4298,7 +4338,7 @@ defmodule LiveGanttTest do
       ]
 
       result =
-        LiveGantt.Layout.sequential(items,
+        PhoenixLiveGantt.Layout.sequential(items,
           start: ~D[2026-04-01],
           id: & &1.id,
           parent_id: & &1.parent_id
@@ -4315,7 +4355,7 @@ defmodule LiveGanttTest do
       items = [%{id: "a", parent_id: nil, duration: nil}]
 
       assert catch_error(
-               LiveGantt.Layout.sequential(items,
+               PhoenixLiveGantt.Layout.sequential(items,
                  start: ~D[2026-04-01],
                  id: & &1.id,
                  parent_id: & &1.parent_id,
@@ -4328,14 +4368,14 @@ defmodule LiveGanttTest do
   describe "a11y + hook gating (M5 regression)" do
     defp a11y_events do
       [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "bar",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           title: "Bar",
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "ms",
           start: ~D[2026-04-10],
           end: ~D[2026-04-10],

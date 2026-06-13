@@ -1,15 +1,15 @@
-defmodule LiveGantt.Inspector do
+defmodule PhoenixLiveGantt.Inspector do
   @moduledoc """
-  Pure-function HTML scraper for LiveGantt output. Takes the rendered
-  HTML string (as produced by `LiveGantt.gantt/1` →
+  Pure-function HTML scraper for PhoenixLiveGantt output. Takes the rendered
+  HTML string (as produced by `PhoenixLiveGantt.gantt/1` →
   `Phoenix.HTML.Safe.to_iodata/1`) and returns a structured geometry
   map.
 
-  Used by tests, the `mix live_gantt.dump` task, and any
+  Used by tests, the `mix phoenix_live_gantt.dump` task, and any
   IEx debugging session where "what does this chart actually look
   like?" needs a structured answer rather than blind regex.
 
-  Path-string parsing is delegated to `LiveGantt.PathFormat`,
+  Path-string parsing is delegated to `PhoenixLiveGantt.PathFormat`,
   which is also what the renderer uses to build paths — so parser and
   builder always speak the same format.
 
@@ -47,10 +47,10 @@ defmodule LiveGantt.Inspector do
   All numeric values are integers (or floats if the path uses decimals).
   """
 
-  alias LiveGantt.PathFormat
+  alias PhoenixLiveGantt.PathFormat
 
   @doc """
-  Parse a LiveGantt HTML render into a structured geometry map.
+  Parse a PhoenixLiveGantt HTML render into a structured geometry map.
   See module doc for the output shape.
   """
   @spec inspect_html(binary()) :: map()
@@ -129,7 +129,7 @@ defmodule LiveGantt.Inspector do
 
   # Bars: left + width + (derived from row_positions) top + bottom
   # for full pixel rectangles. Milestones get an 11px half-width hit box
-  # matching `compute_bar_obstacles/5` in LiveGantt.
+  # matching `compute_bar_obstacles/5` in PhoenixLiveGantt.
   # Horizontal geometry renders as PERCENTAGES of the content width (responsive
   # layout). We reconstruct PIXELS (`pct/100 * content_width`) so the Inspector
   # keeps its pixel contract and stays comparable with connector paths (which

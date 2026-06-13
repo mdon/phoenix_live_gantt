@@ -1,4 +1,4 @@
-defmodule LiveGantt do
+defmodule PhoenixLiveGantt do
   @moduledoc """
   Waterfall (Gantt) view — horizontal bars on a date-range axis.
 
@@ -21,7 +21,7 @@ defmodule LiveGantt do
 
   ## Data mapping
 
-  Waterfall uses the standard `LiveGantt.Task` struct:
+  Waterfall uses the standard `PhoenixLiveGantt.Task` struct:
 
   | Waterfall concept | Event field |
   |-------------------|------------|
@@ -49,9 +49,9 @@ defmodule LiveGantt do
 
   use Phoenix.Component
 
-  alias LiveGantt.PathFormat
-  alias LiveGantt.Utils.{I18n, Safe}
   alias Phoenix.LiveView.JS
+  alias PhoenixLiveGantt.PathFormat
+  alias PhoenixLiveGantt.Utils.{I18n, Safe}
 
   # Row heights in pixels (matches default row_height attr of "2.5rem" = 40px)
   @default_row_px 40
@@ -94,7 +94,7 @@ defmodule LiveGantt do
   handler under the `"event-id"` param key.
 
       def handle_event("toggle_subproject", %{"event-id" => id}, socket) do
-        {:noreply, update(socket, :expanded, &LiveGantt.toggle_expanded(&1, id))}
+        {:noreply, update(socket, :expanded, &PhoenixLiveGantt.toggle_expanded(&1, id))}
       end
   """
   @spec toggle_expanded(MapSet.t() | list() | nil, term()) :: MapSet.t()
@@ -115,7 +115,7 @@ defmodule LiveGantt do
   listens for the dispatched `lg:scroll-start`).
 
       <button phx-click={
-        JS.push("fit_project") |> LiveGantt.scroll_to_start("project-gantt-\#{@id}")
+        JS.push("fit_project") |> PhoenixLiveGantt.scroll_to_start("project-gantt-\#{@id}")
       }>Project</button>
 
   Composes with an existing `JS` command (e.g. a `JS.push/2`); pass it as the
@@ -130,15 +130,15 @@ defmodule LiveGantt do
   orthogonal dependency connectors, milestones, sub-projects, and a built-in
   popover.
 
-  Pass a list of `LiveGantt.Task` structs as `events` and a `Date.Range` as
+  Pass a list of `PhoenixLiveGantt.Task` structs as `events` and a `Date.Range` as
   `date_range`; everything else is optional. Each attribute below documents its
   own default and behavior. The smallest useful call:
 
-      <LiveGantt.gantt events={@tasks} date_range={@range} />
+      <PhoenixLiveGantt.gantt events={@tasks} date_range={@range} />
 
   Note: no stylesheet ships — your app's Tailwind must scan this library as a
   content source (see the README), and the JS hooks (`priv/static/assets/
-  live_gantt.js`) must be registered for the popover / scroll-to-today.
+  phoenix_live_gantt.js`) must be registered for the popover / scroll-to-today.
   """
   attr :events, :list, default: []
   attr :date_range, Date.Range, required: true
@@ -196,7 +196,7 @@ defmodule LiveGantt do
   attr :on_toggle_expand, :any,
     default: nil,
     doc:
-      "phx-click event name fired when a sub-project chevron is toggled. The handler receives the event id under the `\"event-id\"` param key (hyphen). Update your `expanded` set in response — see `LiveGantt.toggle_expanded/2`."
+      "phx-click event name fired when a sub-project chevron is toggled. The handler receives the event id under the `\"event-id\"` param key (hyphen). Update your `expanded` set in response — see `PhoenixLiveGantt.toggle_expanded/2`."
 
   attr :show_progress, :boolean, default: true
   attr :show_today, :boolean, default: true
@@ -400,7 +400,7 @@ defmodule LiveGantt do
   #
   # Click anywhere outside the popover or its bar closes it (or
   # Escape). Requires the `LgBarPopover` JS hook (auto-
-  # registered with the rest of the LiveGantt hooks). Action map
+  # registered with the rest of the PhoenixLiveGantt hooks). Action map
   # shape: `%{icon, tooltip, phx_click, phx_value, phx_target, href,
   # label, class, id}`.
   # `z-[60]` puts an open popover above EVERYTHING else in the chart — bars
@@ -540,7 +540,7 @@ defmodule LiveGantt do
   attr :enable_hooks, :boolean,
     default: false,
     doc:
-      "When true, attaches BOTH JS hooks: `LgAutoScroll` on the container (auto-scroll + today button) and `LgBarPopover` on every bar/milestone/label (the click popover + dependency-tree highlight). Requires the LiveGantt JS bundle (`priv/static/assets/live_gantt.js`, registered as `window.LiveGanttHooks`). Leave false if you don't ship the bundle — otherwise the browser logs an \"unknown hook\" error per element."
+      "When true, attaches BOTH JS hooks: `LgAutoScroll` on the container (auto-scroll + today button) and `LgBarPopover` on every bar/milestone/label (the click popover + dependency-tree highlight). Requires the PhoenixLiveGantt JS bundle (`priv/static/assets/phoenix_live_gantt.js`, registered as `window.PhoenixLiveGanttHooks`). Leave false if you don't ship the bundle — otherwise the browser logs an \"unknown hook\" error per element."
 
   attr :auto_scroll_today, :boolean,
     default: true,
@@ -1617,7 +1617,7 @@ defmodule LiveGantt do
   # the chevron pushes the consumer's `on_toggle_expand` event with
   # `event-id` so they can flip that id in their `expanded` set.
 
-  attr :event, LiveGantt.Task, required: true
+  attr :event, PhoenixLiveGantt.Task, required: true
   attr :tree, :map, required: true
   attr :expanded, :any, required: true
   attr :on_toggle, :any, required: true
@@ -1670,7 +1670,7 @@ defmodule LiveGantt do
 
   # -- Default label component --
 
-  attr :event, LiveGantt.Task, required: true
+  attr :event, PhoenixLiveGantt.Task, required: true
   attr :translations, :map, default: %{}
 
   defp default_label(assigns) do
@@ -2074,7 +2074,7 @@ defmodule LiveGantt do
   # whole-day behaviour exactly.
   defp bar_geometry(event, {origin, span_days} = _view, day_px, min_bar_px) do
     fs = frac_days(event.start, origin)
-    fe = frac_days(LiveGantt.Task.effective_end(event), origin)
+    fe = frac_days(PhoenixLiveGantt.Task.effective_end(event), origin)
     is_milestone = fe - fs <= 0
 
     cond do
@@ -3008,7 +3008,7 @@ defmodule LiveGantt do
 
       _ ->
         {x_px(event.start, origin, day_px),
-         x_px(LiveGantt.Task.effective_end(event), origin, day_px)}
+         x_px(PhoenixLiveGantt.Task.effective_end(event), origin, day_px)}
     end
   end
 
@@ -3035,9 +3035,9 @@ defmodule LiveGantt do
     # is wrongly flagged backward because A's 1px sliver pokes past B's start.)
     # Origin is shared, so the relative comparison is unaffected by which it is.
     from_start_nat = x_px(from_event.start, origin, day_px)
-    from_end_nat = x_px(LiveGantt.Task.effective_end(from_event), origin, day_px)
+    from_end_nat = x_px(PhoenixLiveGantt.Task.effective_end(from_event), origin, day_px)
     to_start_nat = x_px(to_event.start, origin, day_px)
-    to_end_nat = x_px(LiveGantt.Task.effective_end(to_event), origin, day_px)
+    to_end_nat = x_px(PhoenixLiveGantt.Task.effective_end(to_event), origin, day_px)
 
     case type do
       :fs ->
@@ -4155,9 +4155,12 @@ defmodule LiveGantt do
   # rendered as a thin bar, so arrows routed to/from a phantom diamond and
   # appeared disconnected. For pure-`Date` events this is identical to the old
   # `Date.diff` test (frac duration == date diff), so day/week/month is unchanged.
-  defp milestone?(%LiveGantt.Task{} = event) do
+  defp milestone?(%PhoenixLiveGantt.Task{} = event) do
     ref = to_date(event.start)
-    duration = frac_days(LiveGantt.Task.effective_end(event), ref) - frac_days(event.start, ref)
+
+    duration =
+      frac_days(PhoenixLiveGantt.Task.effective_end(event), ref) - frac_days(event.start, ref)
+
     duration <= 0
   end
 
@@ -4177,9 +4180,9 @@ defmodule LiveGantt do
     group != nil and Map.get(groups, group) == idx
   end
 
-  defp get_group(%LiveGantt.Task{category: cat}) when not is_nil(cat), do: to_string(cat)
+  defp get_group(%PhoenixLiveGantt.Task{category: cat}) when not is_nil(cat), do: to_string(cat)
 
-  defp get_group(%LiveGantt.Task{extra: %{group: group}}) when not is_nil(group),
+  defp get_group(%PhoenixLiveGantt.Task{extra: %{group: group}}) when not is_nil(group),
     do: to_string(group)
 
   defp get_group(_), do: nil
@@ -4212,7 +4215,7 @@ defmodule LiveGantt do
 
     if nil_id? do
       raise ArgumentError, """
-      LiveGantt.gantt/1: an event has a `nil` id. Every event needs a unique,
+      PhoenixLiveGantt.gantt/1: an event has a `nil` id. Every event needs a unique,
       non-nil `id` — connectors and `parent_id` reference it, and it forms the
       bar/popover DOM ids (so multiple `nil` ids silently collide).
       """
@@ -4224,7 +4227,7 @@ defmodule LiveGantt do
 
       ids ->
         raise ArgumentError, """
-        LiveGantt.gantt/1: duplicate event ids found in `events`: #{inspect(ids)}.
+        PhoenixLiveGantt.gantt/1: duplicate event ids found in `events`: #{inspect(ids)}.
 
         Every event must have a unique `id`. Duplicate ids produce duplicate
         DOM element ids (bar wrappers, popovers, connector endpoints) which
@@ -4239,7 +4242,7 @@ defmodule LiveGantt do
         # Drop events missing a start date entirely — without it there
         # is nothing to position the bar against. Silent (no Logger
         # call) so a malformed task can't spam the host app's logs.
-        is_nil(event.start) or is_nil(LiveGantt.Task.effective_end(event)) ->
+        is_nil(event.start) or is_nil(PhoenixLiveGantt.Task.effective_end(event)) ->
           {in_range, earlier, later}
 
         true ->
@@ -4249,7 +4252,7 @@ defmodule LiveGantt do
           # `bar_geometry` returns `%{out_of_range: true}` and the template
           # crashes on `bar.milestone`.
           fs = frac_days(event.start, origin)
-          fe = frac_days(LiveGantt.Task.effective_end(event), origin)
+          fe = frac_days(PhoenixLiveGantt.Task.effective_end(event), origin)
           is_milestone = fe - fs <= 0
 
           cond do
@@ -4285,7 +4288,9 @@ defmodule LiveGantt do
     end)
   end
 
-  defp explicit_order(%LiveGantt.Task{extra: %{order: order}}) when is_integer(order), do: order
+  defp explicit_order(%PhoenixLiveGantt.Task{extra: %{order: order}}) when is_integer(order),
+    do: order
+
   defp explicit_order(_), do: nil
 
   # Compute an integer placement index for each event within its group.
@@ -4416,12 +4421,15 @@ defmodule LiveGantt do
   # Struct field wins; `extra.progress_pct` is the fallback for consumers that
   # carry their data in `extra`. The struct default is `nil`, so an unset field
   # transparently defers to `extra`.
-  defp progress_pct(%LiveGantt.Task{progress_pct: pct}) when is_number(pct), do: pct
-  defp progress_pct(%LiveGantt.Task{extra: %{progress_pct: pct}}) when is_number(pct), do: pct
+  defp progress_pct(%PhoenixLiveGantt.Task{progress_pct: pct}) when is_number(pct), do: pct
+
+  defp progress_pct(%PhoenixLiveGantt.Task{extra: %{progress_pct: pct}}) when is_number(pct),
+    do: pct
+
   defp progress_pct(_), do: 0
 
-  defp assignee(%LiveGantt.Task{assignee: a}) when is_binary(a), do: a
-  defp assignee(%LiveGantt.Task{extra: %{assignee: a}}) when is_binary(a), do: a
+  defp assignee(%PhoenixLiveGantt.Task{assignee: a}) when is_binary(a), do: a
+  defp assignee(%PhoenixLiveGantt.Task{extra: %{assignee: a}}) when is_binary(a), do: a
   defp assignee(_), do: nil
 
   # -- Sub-project tree helpers --
@@ -4433,7 +4441,7 @@ defmodule LiveGantt do
   # unbounded). Events whose parent_id points to an event that isn't
   # in the list are treated as top-level.
 
-  defp parent_id_of(%LiveGantt.Task{extra: %{parent_id: pid}})
+  defp parent_id_of(%PhoenixLiveGantt.Task{extra: %{parent_id: pid}})
        when is_binary(pid) or is_atom(pid),
        do: to_string(pid)
 
@@ -4612,7 +4620,7 @@ defmodule LiveGantt do
           |> rolled_up_range()
           |> case do
             nil -> ev
-            {min_start, max_end} -> %LiveGantt.Task{ev | start: min_start, end: max_end}
+            {min_start, max_end} -> %PhoenixLiveGantt.Task{ev | start: min_start, end: max_end}
           end
       end
     end)
@@ -4631,7 +4639,7 @@ defmodule LiveGantt do
 
     ends =
       events
-      |> Enum.map(&LiveGantt.Task.effective_end/1)
+      |> Enum.map(&PhoenixLiveGantt.Task.effective_end/1)
       |> Enum.reject(&is_nil/1)
 
     case {starts, ends} do
@@ -4798,7 +4806,7 @@ defmodule LiveGantt do
   # `event.extra.badges` is a list of badge maps. Anything else
   # (missing key, non-list, non-map entries) is silently dropped so a
   # typo can't crash the render.
-  defp bar_badges(%LiveGantt.Task{extra: %{badges: badges}}) when is_list(badges),
+  defp bar_badges(%PhoenixLiveGantt.Task{extra: %{badges: badges}}) when is_list(badges),
     do: Enum.filter(badges, &is_map/1)
 
   defp bar_badges(_), do: []
@@ -4917,7 +4925,7 @@ defmodule LiveGantt do
   #     href:       "/events/123",            # optional, renders as <a>
   #     class:      "text-primary"            # optional, extra classes
   #   }
-  defp bar_actions(%LiveGantt.Task{extra: %{actions: actions}}) when is_list(actions),
+  defp bar_actions(%PhoenixLiveGantt.Task{extra: %{actions: actions}}) when is_list(actions),
     do: Enum.filter(actions, &is_map/1)
 
   defp bar_actions(_), do: []

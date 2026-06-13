@@ -7,10 +7,10 @@ standalone package.
 
 ### Features
 
-- `LiveGantt.gantt/1` component — horizontal bars on a time axis with
+- `PhoenixLiveGantt.gantt/1` component — horizontal bars on a time axis with
   orthogonal connector routing (FS/SS/FF/SF), bar-edge attach modes,
   bus stagger, smart trunk consolidation.
-- `LiveGantt.Task` struct — Gantt-focused (no calendar/recurrence
+- `PhoenixLiveGantt.Task` struct — Gantt-focused (no calendar/recurrence
   baggage).
 - Sub-projects: any task with `extra.parent_id` becomes a child;
   parents roll up over descendants, expand/collapse via chevron or
@@ -19,11 +19,11 @@ standalone package.
   subtitle, optional custom action buttons (icon + tooltip +
   phx-click + per-event badges).
 - Corner badges (notification-style pills with stacking + flash).
-- Built-in `LiveGantt.Inspector` for HTML → geometry parsing and
-  `LiveGantt.TestHelpers` for property assertions.
-- `mix live_gantt.dump` for offline geometry inspection.
+- Built-in `PhoenixLiveGantt.Inspector` for HTML → geometry parsing and
+  `PhoenixLiveGantt.TestHelpers` for property assertions.
+- `mix phoenix_live_gantt.dump` for offline geometry inspection.
 - JS hooks `LgBarPopover` + `LgAutoScroll`.
-- **`LiveGantt.scroll_to_start/2` — scroll the timeline back to its start.** A
+- **`PhoenixLiveGantt.scroll_to_start/2` — scroll the timeline back to its start.** A
   `Phoenix.LiveView.JS` command (composes with `JS.push/2`) that the
   `LgAutoScroll` hook consumes (`lg:scroll-start`) to scroll the chart to its
   leftmost column. Pair it with a "home"/"fit" button whose server handler
@@ -82,7 +82,7 @@ standalone package.
   task differ in width/position). `Date` inputs at day/week/month zoom are
   byte-identical to before. `today` accepts a `DateTime`/`NaiveDateTime` for a
   precise "now" line + current-hour column highlight; positioning uses
-  wall-clock time (DST-safe). `LiveGantt.Layout.sequential/2` gained a
+  wall-clock time (DST-safe). `PhoenixLiveGantt.Layout.sequential/2` gained a
   `:min_span` `{unit, n}` option and emits sub-day temporals when its
   `:start`/`:advance` do.
 - **Responsive fit-to-width (pure CSS, no round-trip).** Horizontal geometry
@@ -166,7 +166,7 @@ standalone package.
   SVG `<marker>`s inside the `preserveAspectRatio="none"` shaft SVG, so at high
   fill factors they stretched into thin, disconnected-looking triangles. They
   now render in a fixed-px overlay anchored by `%` to the shaft's true terminal
-  point (`LiveGantt.PathFormat.terminal/1`), so the head stays on the shaft end
+  point (`PhoenixLiveGantt.PathFormat.terminal/1`), so the head stays on the shaft end
   even when `consolidate_piercing_trunks` re-routes a forward path to end at a
   different y (the old marker rode the path, the overlay must re-derive it).
   New `Inspector` arrowhead extraction + `TestHelpers.assert_arrowheads_at_path_ends/2`
@@ -190,13 +190,13 @@ standalone package.
 
 ### Ergonomics & docs
 
-- `LiveGantt.Layout.sequential/2` — optional, domain-agnostic helper that lays
+- `PhoenixLiveGantt.Layout.sequential/2` — optional, domain-agnostic helper that lays
   items with *durations + order + sub-projects* out into `start`/`end` dates
   (sequential waterfall, sub-project span, day-aligned `:min_span_days`) with a
   pluggable `:advance` calendar callback. Keeps `gantt/1` render-only while
   giving consumers the durations→dates layout they'd otherwise hand-roll. Does
   not do dependency-driven scheduling / critical path / resource leveling.
-- `LiveGantt.toggle_expanded/2` — convenience for `on_toggle_expand` handlers
+- `PhoenixLiveGantt.toggle_expanded/2` — convenience for `on_toggle_expand` handlers
   (accepts a MapSet/list/nil, returns a MapSet).
 - README rewritten with the steps/gotchas that bite first-time consumers: the
   required **Tailwind content source** (no stylesheet ships), `end` being

@@ -1,19 +1,19 @@
-defmodule LiveGantt.InspectorTest do
+defmodule PhoenixLiveGantt.InspectorTest do
   use ExUnit.Case, async: true
 
-  alias LiveGantt.Inspector
-  alias LiveGantt.TestHelpers
+  alias PhoenixLiveGantt.Inspector
+  alias PhoenixLiveGantt.TestHelpers
 
   describe "inspect_html/1" do
     test "extracts row order in document order" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "z",
           start: ~D[2026-04-01],
           end: ~D[2026-04-02],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-03],
           end: ~D[2026-04-04],
@@ -29,7 +29,7 @@ defmodule LiveGantt.InspectorTest do
 
     test "extracts bar geometries for non-milestone events" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "x",
           start: ~D[2026-04-01],
           end: ~D[2026-04-08],
@@ -46,7 +46,7 @@ defmodule LiveGantt.InspectorTest do
 
     test "extracts milestone geometries with width 0" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "ms",
           start: ~D[2026-04-15],
           end: ~D[2026-04-15],
@@ -62,13 +62,13 @@ defmodule LiveGantt.InspectorTest do
 
     test "parses a forward (3-segment) connector path into segment fields" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -91,13 +91,13 @@ defmodule LiveGantt.InspectorTest do
     test "parses a 5-segment detour path (backward FS conflict)" do
       events = [
         # Source ends AFTER target starts → backward FS
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "src",
           start: ~D[2026-04-10],
           end: ~D[2026-04-20],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "tgt",
           start: ~D[2026-04-01],
           end: ~D[2026-04-08],
@@ -127,19 +127,19 @@ defmodule LiveGantt.InspectorTest do
 
     test "extracts edge indicator counts when out-of-range events exist" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "in",
           start: ~D[2026-05-15],
           end: ~D[2026-05-20],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "before",
           start: ~D[2026-01-01],
           end: ~D[2026-01-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "after",
           start: ~D[2026-12-01],
           end: ~D[2026-12-10],
@@ -156,13 +156,13 @@ defmodule LiveGantt.InspectorTest do
 
     test "marks critical connectors" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -182,19 +182,19 @@ defmodule LiveGantt.InspectorTest do
   describe "convenience helpers" do
     test "connectors_from + connectors_to filter by id" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-20],
           end: ~D[2026-04-25],

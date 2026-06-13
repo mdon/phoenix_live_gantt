@@ -1,4 +1,4 @@
-# LiveGantt
+# PhoenixLiveGantt
 
 A Phoenix LiveView Gantt chart component: horizontal bars on a time axis,
 dependency arrows between them, sub-projects with roll-up bars, corner
@@ -8,7 +8,7 @@ geometry audit.
 The `gantt/1` component is **render-only**: you give it events with `start`/`end`
 **dates** and it draws bars, columns, connectors, and frames. It has no concept
 of durations, working hours, or scheduling. If your domain has *durations + an
-order + sub-projects* but no dates, the optional `LiveGantt.Layout.sequential/2`
+order + sub-projects* but no dates, the optional `PhoenixLiveGantt.Layout.sequential/2`
 helper does that translation for you (sequential waterfall, sub-project span,
 day-aligned min span) with a pluggable calendar callback — see
 [Laying out from durations](#laying-out-from-durations).
@@ -18,7 +18,7 @@ day-aligned min span) with a pluggable calendar callback — see
 ```elixir
 def deps do
   [
-    {:live_gantt, "~> 0.1"}
+    {:phoenix_live_gantt, "~> 0.1"}
   ]
 end
 ```
@@ -33,10 +33,10 @@ The popover, fade-on-open, and auto-scroll-to-today behaviours need the JS
 hooks. In your `app.js`:
 
 ```js
-import "../../deps/live_gantt/priv/static/assets/live_gantt.js"
+import "../../deps/phoenix_live_gantt/priv/static/assets/phoenix_live_gantt.js"
 
 let liveSocket = new LiveSocket("/live", Socket, {
-  hooks: { ...window.LiveGanttHooks, ...myHooks }
+  hooks: { ...window.PhoenixLiveGanttHooks, ...myHooks }
 })
 ```
 
@@ -45,8 +45,8 @@ popover and the today-button / auto-scroll won't work.
 
 ### 2. CSS / Tailwind (required)
 
-**LiveGantt ships no stylesheet.** Its visuals are Tailwind utility classes
-that live inside the component's template (`.ex` source in `deps/live_gantt`).
+**PhoenixLiveGantt ships no stylesheet.** Its visuals are Tailwind utility classes
+that live inside the component's template (`.ex` source in `deps/phoenix_live_gantt`).
 Tailwind only emits CSS for classes it can *see*, so you must add the package
 to your content sources, or library-specific classes (the sub-project
 pattern-fill, `text-[0.6rem]` connector labels, non-working-day shading,
@@ -56,7 +56,7 @@ badge sizing, …) get purged and the chart looks subtly broken.
 
 ```css
 @import "tailwindcss";
-@source "../../deps/live_gantt/lib";
+@source "../../deps/phoenix_live_gantt/lib";
 ```
 
 **Tailwind v3** — add a glob to `content` in `tailwind.config.js`:
@@ -66,12 +66,12 @@ module.exports = {
   content: [
     "./js/**/*.js",
     "../lib/my_app_web/**/*.*ex",
-    "../deps/live_gantt/lib/**/*.*ex"
+    "../deps/phoenix_live_gantt/lib/**/*.*ex"
   ]
 }
 ```
 
-LiveGantt uses **daisyUI** semantic color tokens (`bg-primary`,
+PhoenixLiveGantt uses **daisyUI** semantic color tokens (`bg-primary`,
 `text-base-content`, `bg-success`, …). daisyUI isn't required — every color is
 overridable per attr (see `bar_default_color_class` and friends) — but the
 defaults assume those tokens resolve to something.
@@ -83,7 +83,7 @@ defaults assume those tokens resolve to something.
 ## Basic usage
 
 ```heex
-<LiveGantt.gantt
+<PhoenixLiveGantt.gantt
   id="project"
   events={@tasks}
   date_range={@range}
@@ -93,10 +93,10 @@ defaults assume those tokens resolve to something.
 />
 ```
 
-A task is a `LiveGantt.Task` struct:
+A task is a `PhoenixLiveGantt.Task` struct:
 
 ```elixir
-%LiveGantt.Task{
+%PhoenixLiveGantt.Task{
   id: "cut-wood",                # unique within the chart; connectors + parent_id reference this
   title: "Cut planks to length",
   start: ~D[2026-04-01],
@@ -113,8 +113,8 @@ axis. Pass `id` whenever you use the built-in toolbar (`show_header`) or
 auto-scroll, and always when more than one chart shares a page — DOM ids and
 JS dispatches are namespaced by it.
 
-See `LiveGantt.gantt/1` for the full attr list (there are many styling hooks,
-all with sane defaults) and `LiveGantt.Task` for all task fields.
+See `PhoenixLiveGantt.gantt/1` for the full attr list (there are many styling hooks,
+all with sane defaults) and `PhoenixLiveGantt.Task` for all task fields.
 
 ## Dates → bars
 
@@ -123,7 +123,7 @@ being exclusive trips people up:
 
 - **`end` is exclusive.** A bar covers `[start, end)`. A task that occupies
   just April 1 is `start: ~D[2026-04-01], end: ~D[2026-04-02]`. If `end` is
-  `nil`, `LiveGantt.Task.effective_end/1` fills it in: `start + 1 day` for a
+  `nil`, `PhoenixLiveGantt.Task.effective_end/1` fills it in: `start + 1 day` for a
   `Date`, `+30 min` for a `DateTime`/`NaiveDateTime`.
 - **Milestones.** When `end <= start` (zero duration) the task renders as a
   diamond instead of a bar. A `nil`-`end` task with **no children** is a
@@ -170,7 +170,7 @@ consumer — they're the rules to internalize:
 
    ```elixir
    # render
-   <LiveGantt.gantt
+   <PhoenixLiveGantt.gantt
      events={@events}
      date_range={@range}
      expanded={@expanded}                 # MapSet | list | :all | nil
@@ -196,13 +196,13 @@ dangle.
 
 ## Laying out from durations
 
-If your data has durations rather than dates, `LiveGantt.Layout.sequential/2`
+If your data has durations rather than dates, `PhoenixLiveGantt.Layout.sequential/2`
 turns it into the dates `gantt/1` wants — so you don't hand-roll (and re-bug)
 the waterfall + sub-project-span + day-alignment yourself:
 
 ```elixir
 layout =
-  LiveGantt.Layout.sequential(tasks,
+  PhoenixLiveGantt.Layout.sequential(tasks,
     start: ~D[2026-06-01],
     id: & &1.id,
     parent_id: & &1.parent_id,      # nil = top-level; others nest
@@ -218,7 +218,7 @@ layout =
 events =
   Enum.map(tasks, fn t ->
     %{start: s, end: e} = layout[t.id]
-    %LiveGantt.Task{id: t.id, title: t.title, start: s, end: e,
+    %PhoenixLiveGantt.Task{id: t.id, title: t.title, start: s, end: e,
                     extra: %{parent_id: t.parent_id}}
   end)
 ```
@@ -248,10 +248,10 @@ Dependency arrows are plain maps referencing event ids:
 
 ## Debugging
 
-- `mix live_gantt.dump` renders a chart from a fixture and prints parsed bar
+- `mix phoenix_live_gantt.dump` renders a chart from a fixture and prints parsed bar
   geometry — handy for checking positions without a browser.
-- `LiveGantt.Inspector` parses rendered HTML into geometry, and
-  `LiveGantt.TestHelpers` adds property assertions (bar containment, ordering,
+- `PhoenixLiveGantt.Inspector` parses rendered HTML into geometry, and
+  `PhoenixLiveGantt.TestHelpers` adds property assertions (bar containment, ordering,
   connector validity) you can use in your own tests.
 
 ## Gotchas
@@ -272,8 +272,8 @@ consumer:
 - **`id` is required** with `show_header` / auto-scroll, and whenever two
   charts share a page (ids + JS dispatches are namespaced by it).
 - **The JS bundle is effectively required.** The `LgBarPopover` /
-  `LgAutoScroll` hooks ship in `priv/static/assets/live_gantt.js` (registered as
-  `window.LiveGanttHooks`). `enable_hooks` (default `false`) gates BOTH hooks; if
+  `LgAutoScroll` hooks ship in `priv/static/assets/phoenix_live_gantt.js` (registered as
+  `window.PhoenixLiveGanttHooks`). `enable_hooks` (default `false`) gates BOTH hooks; if
   you turn it on without registering the bundle you'll get "unknown hook"
   console errors. The popover and scroll-to-today need it.
 - **Sub-project chevrons use heroicons** (`hero-plus-mini` / `hero-minus-mini`).

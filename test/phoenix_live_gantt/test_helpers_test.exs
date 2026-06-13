@@ -1,41 +1,41 @@
-defmodule LiveGantt.TestHelpersTest do
+defmodule PhoenixLiveGantt.TestHelpersTest do
   use ExUnit.Case, async: true
 
-  alias LiveGantt.TestHelpers
+  alias PhoenixLiveGantt.TestHelpers
 
   defp fanout_events do
     [
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "h",
         start: ~D[2026-04-01],
         end: ~D[2026-04-10],
         color: "bg-primary"
       },
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t1",
         start: ~D[2026-04-11],
         end: ~D[2026-04-15],
         color: "bg-primary"
       },
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t2",
         start: ~D[2026-04-11],
         end: ~D[2026-04-15],
         color: "bg-primary"
       },
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t3",
         start: ~D[2026-04-11],
         end: ~D[2026-04-15],
         color: "bg-primary"
       },
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t4",
         start: ~D[2026-04-11],
         end: ~D[2026-04-15],
         color: "bg-primary"
       },
-      %LiveGantt.Task{
+      %PhoenixLiveGantt.Task{
         id: "t5",
         start: ~D[2026-04-11],
         end: ~D[2026-04-15],
@@ -57,7 +57,7 @@ defmodule LiveGantt.TestHelpersTest do
   describe "render_waterfall/2" do
     test "renders with derived range when no date_range given" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "x",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -106,13 +106,13 @@ defmodule LiveGantt.TestHelpersTest do
 
     test "passes for single-arrow source (trivially even)" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -126,7 +126,7 @@ defmodule LiveGantt.TestHelpersTest do
 
     test "raises when no connectors found from given source" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
@@ -183,13 +183,13 @@ defmodule LiveGantt.TestHelpersTest do
     # for non-milestone targets after refX=6 fix).
     test "arrow tips land on (not inside) target bars (regression for refX gap bug)" do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -210,19 +210,19 @@ defmodule LiveGantt.TestHelpersTest do
       # Three events where the trunk for a→c doesn't cross b's bar
       # (b's bar starts after the trunk x).
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-25],
           end: ~D[2026-04-30],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-15],
           end: ~D[2026-04-20],
@@ -253,13 +253,13 @@ defmodule LiveGantt.TestHelpersTest do
     test "runs every assertion and reports each failure" do
       # Single FS chain with no issues — should pass all checks.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -331,13 +331,13 @@ defmodule LiveGantt.TestHelpersTest do
   describe "assertion detectors raise on violating fixtures (M7)" do
     defp simple_chain_html do
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary"
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-10],
           end: ~D[2026-04-15],
@@ -400,21 +400,21 @@ defmodule LiveGantt.TestHelpersTest do
       # spans b's row, then move b's bar onto the trunk's x-column so the
       # vertical segment visibly cuts through it.
       events = [
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "a",
           start: ~D[2026-04-01],
           end: ~D[2026-04-05],
           color: "bg-primary",
           extra: %{order: 1}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "b",
           start: ~D[2026-04-15],
           end: ~D[2026-04-20],
           color: "bg-primary",
           extra: %{order: 2}
         },
-        %LiveGantt.Task{
+        %PhoenixLiveGantt.Task{
           id: "c",
           start: ~D[2026-04-25],
           end: ~D[2026-04-30],

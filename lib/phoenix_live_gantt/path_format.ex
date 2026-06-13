@@ -1,6 +1,6 @@
-defmodule LiveGantt.PathFormat do
+defmodule PhoenixLiveGantt.PathFormat do
   @moduledoc """
-  Single source of truth for the LiveGantt connector path string format.
+  Single source of truth for the PhoenixLiveGantt connector path string format.
 
   Connector paths come in two shape families:
 
@@ -13,8 +13,8 @@ defmodule LiveGantt.PathFormat do
                   laid out cleanly (target before source, tight gap, or
                   trunk would pierce intermediate bars).
 
-  Owning both the BUILDER and the PARSER here keeps `LiveGantt` (which
-  emits paths) and `LiveGantt.Inspector` (which parses them for tests
+  Owning both the BUILDER and the PARSER here keeps `PhoenixLiveGantt` (which
+  emits paths) and `PhoenixLiveGantt.Inspector` (which parses them for tests
   and the dump task) in sync — if a new shape family is added or the
   format changes, both update at once.
 
@@ -22,7 +22,7 @@ defmodule LiveGantt.PathFormat do
   by the renderer today; if that ever changes, extend `parse/1`.
   """
 
-  # ---- Builders (used by the LiveGantt renderer) ----
+  # ---- Builders (used by the PhoenixLiveGantt renderer) ----
 
   @doc """
   Build the 3-segment forward path string.

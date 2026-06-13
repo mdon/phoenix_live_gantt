@@ -1,7 +1,7 @@
 /**
- * LiveGantt JS Hooks
+ * PhoenixLiveGantt JS Hooks
  *
- * Optional but recommended JS hooks for the LiveGantt chart:
+ * Optional but recommended JS hooks for the PhoenixLiveGantt chart:
  *   - LgBarPopover    : click bar/label to open the detail popover,
  *                       fade non-tree tasks, slide bottom badges past
  *                       the popover, etc.
@@ -10,25 +10,25 @@
  *
  * Usage in your app.js:
  *
- *   import "../../deps/live_gantt/priv/static/assets/live_gantt.js"
+ *   import "../../deps/phoenix_live_gantt/priv/static/assets/phoenix_live_gantt.js"
  *
  *   let liveSocket = new LiveSocket("/live", Socket, {
- *     hooks: { ...window.LiveGanttHooks, ...myHooks }
+ *     hooks: { ...window.PhoenixLiveGanttHooks, ...myHooks }
  *   })
  */
 
 (function () {
   "use strict";
 
-  window.LiveGanttHooks = window.LiveGanttHooks || {};
+  window.PhoenixLiveGanttHooks = window.PhoenixLiveGanttHooks || {};
 
-  window.LiveGanttHooks.LgAutoScroll = {
+  window.PhoenixLiveGanttHooks.LgAutoScroll = {
     mounted() {
       this._onScrollToday = () => this._scrollToToday(true);
       this.el.addEventListener("lg:scroll-today", this._onScrollToday);
 
       // Scroll back to the timeline start (leftmost column). Fired by
-      // `LiveGantt.scroll_to_start/2` — e.g. a "fit to project" button whose
+      // `PhoenixLiveGantt.scroll_to_start/2` — e.g. a "fit to project" button whose
       // refit may not include today, so scroll-to-today wouldn't fire. The
       // `_pendingScrollStart` flag makes the post-patch `updated()` honor this
       // even when the refit moves the today marker (which would otherwise
@@ -128,7 +128,7 @@
   // Touch devices: a normal `click` event fires on tap, so this hook
   // works for both desktop click and mobile tap with no special-case
   // pointer handling.
-  window.LiveGanttHooks.LgBarPopover = {
+  window.PhoenixLiveGanttHooks.LgBarPopover = {
     mounted() {
       this._onClick = (e) => {
         // Clicks inside the popover itself shouldn't toggle / close
@@ -185,8 +185,8 @@
       // Track this bar in the document-level registry so the global
       // outside-click handler can find every open popover and close
       // them in one pass.
-      window.LiveGanttHooks.LgBarPopover._installGlobal();
-      window.LiveGanttHooks.LgBarPopover._bars.add(this.el);
+      window.PhoenixLiveGanttHooks.LgBarPopover._installGlobal();
+      window.PhoenixLiveGanttHooks.LgBarPopover._bars.add(this.el);
 
       // If this bar was the active popover BEFORE a LiveView diff
       // re-rendered it (same DOM id, new mount), restore the open
@@ -199,7 +199,7 @@
     destroyed() {
       this.el.removeEventListener("click", this._onClick);
       this.el.removeEventListener("keydown", this._onKeydown);
-      window.LiveGanttHooks.LgBarPopover._bars.delete(this.el);
+      window.PhoenixLiveGanttHooks.LgBarPopover._bars.delete(this.el);
       // Do NOT clear `_activeBarByChart` here — the bar might be
       // re-mounting after a diff and we want `mounted()` to restore.
     },
@@ -216,7 +216,7 @@
       const chartEl = this.el.closest(".lg-wrap");
       if (!chartEl) return;
       const active =
-        window.LiveGanttHooks.LgBarPopover._activeBarByChart.get(chartEl);
+        window.PhoenixLiveGanttHooks.LgBarPopover._activeBarByChart.get(chartEl);
       if (!active) return;
 
       // Find the element that owned the open popover (could be a bar
@@ -229,7 +229,7 @@
       if (!activeEl) {
         // The active element vanished (e.g. server removed the event).
         // Clear the stale registration so future restores no-op.
-        window.LiveGanttHooks.LgBarPopover._activeBarByChart.delete(chartEl);
+        window.PhoenixLiveGanttHooks.LgBarPopover._activeBarByChart.delete(chartEl);
         return;
       }
 
@@ -237,10 +237,10 @@
       if (popover) popover.classList.remove("hidden");
       activeEl.dataset.popoverOpen = "true";
 
-      window.LiveGanttHooks.LgBarPopover._applyTreeFade(activeEl, active.eventId);
+      window.PhoenixLiveGanttHooks.LgBarPopover._applyTreeFade(activeEl, active.eventId);
       if (popover) {
         requestAnimationFrame(() => {
-          window.LiveGanttHooks.LgBarPopover._pushBottomBadges(
+          window.PhoenixLiveGanttHooks.LgBarPopover._pushBottomBadges(
             activeEl,
             popover,
           );
@@ -261,7 +261,7 @@
     _open() {
       const p = this._popover();
       if (!p) return;
-      window.LiveGanttHooks.LgBarPopover._closeAll();
+      window.PhoenixLiveGanttHooks.LgBarPopover._closeAll();
 
       // Re-anchor the popover to the bar's CURRENT geometry before showing it.
       // The popover is `phx-update="ignore"` so LiveView never updates its
@@ -293,13 +293,13 @@
         // label rows share an event id but expose distinct popovers.
         const chartEl = this.el.closest(".lg-wrap");
         if (chartEl) {
-          window.LiveGanttHooks.LgBarPopover._activeBarByChart.set(chartEl, {
+          window.PhoenixLiveGanttHooks.LgBarPopover._activeBarByChart.set(chartEl, {
             popoverId,
             eventId,
           });
         }
 
-        window.LiveGanttHooks.LgBarPopover._applyTreeFade(this.el, eventId);
+        window.PhoenixLiveGanttHooks.LgBarPopover._applyTreeFade(this.el, eventId);
       }
 
       // Push bottom-corner badges of the active task down so the
@@ -307,7 +307,7 @@
       // the popover becomes visible (`requestAnimationFrame` ensures
       // layout is settled), so we get the popover's actual height.
       requestAnimationFrame(() => {
-        window.LiveGanttHooks.LgBarPopover._pushBottomBadges(this.el, p);
+        window.PhoenixLiveGanttHooks.LgBarPopover._pushBottomBadges(this.el, p);
       });
     },
 
@@ -325,12 +325,12 @@
       // Clear the chart's active bar registration.
       const chartEl = this.el.closest(".lg-wrap");
       if (chartEl) {
-        window.LiveGanttHooks.LgBarPopover._activeBarByChart.delete(chartEl);
+        window.PhoenixLiveGanttHooks.LgBarPopover._activeBarByChart.delete(chartEl);
       }
 
       // Restore everything else.
-      window.LiveGanttHooks.LgBarPopover._clearTreeFade(this.el);
-      window.LiveGanttHooks.LgBarPopover._restoreBottomBadges(this.el);
+      window.PhoenixLiveGanttHooks.LgBarPopover._clearTreeFade(this.el);
+      window.PhoenixLiveGanttHooks.LgBarPopover._restoreBottomBadges(this.el);
     },
 
     _toggle() {
@@ -341,15 +341,15 @@
   // Document-wide outside-click + Escape handlers, installed once.
   // Tracks every mounted bar so a single listener handles all of
   // them (avoids registering N document listeners).
-  window.LiveGanttHooks.LgBarPopover._bars = new Set();
-  window.LiveGanttHooks.LgBarPopover._globalInstalled = false;
+  window.PhoenixLiveGanttHooks.LgBarPopover._bars = new Set();
+  window.PhoenixLiveGanttHooks.LgBarPopover._globalInstalled = false;
 
   // Chart wrap element → active (open) event id. Survives LiveView
   // diffs so a re-mounted bar hook can restore its popover/fade state.
   // Cleaned up by `_close` / `_closeAll` and on outside-click close.
-  window.LiveGanttHooks.LgBarPopover._activeBarByChart = new WeakMap();
+  window.PhoenixLiveGanttHooks.LgBarPopover._activeBarByChart = new WeakMap();
 
-  window.LiveGanttHooks.LgBarPopover._installGlobal = function () {
+  window.PhoenixLiveGanttHooks.LgBarPopover._installGlobal = function () {
     if (this._globalInstalled) return;
     this._globalInstalled = true;
 
@@ -390,7 +390,7 @@
     });
   };
 
-  window.LiveGanttHooks.LgBarPopover._closeAll = function () {
+  window.PhoenixLiveGanttHooks.LgBarPopover._closeAll = function () {
     this._bars.forEach((bar) => {
       if (bar.dataset.popoverOpen !== "true") return;
       const popoverId = bar.dataset.popoverTarget;
@@ -419,7 +419,7 @@
   // and the parent sub-project's own incoming connectors. A nested
   // task implicitly inherits everything its container sub-project
   // depends on, so those should stay full color too.
-  window.LiveGanttHooks.LgBarPopover._collectTree = function (chartEl, activeId) {
+  window.PhoenixLiveGanttHooks.LgBarPopover._collectTree = function (chartEl, activeId) {
     // Reverse adjacency: for each task, who points INTO it.
     const reverse = new Map();
     chartEl.querySelectorAll("[data-from-id][data-to-id]").forEach((c) => {
@@ -469,7 +469,7 @@
   // Add `lg-faded` to every bar/label/connector NOT in the active
   // task's dependency tree. Scoped to the chart that contains the
   // active bar so multiple charts on one page don't interfere.
-  window.LiveGanttHooks.LgBarPopover._applyTreeFade = function (activeEl, activeId) {
+  window.PhoenixLiveGanttHooks.LgBarPopover._applyTreeFade = function (activeEl, activeId) {
     const chartEl = activeEl.closest(".lg-wrap");
     if (!chartEl) return;
 
@@ -518,7 +518,7 @@
   // Strip every `lg-faded` mark inside the chart that owns
   // `activeEl`. Called on popover close + before opening a different
   // popover (so transitions are clean).
-  window.LiveGanttHooks.LgBarPopover._clearTreeFade = function (activeEl) {
+  window.PhoenixLiveGanttHooks.LgBarPopover._clearTreeFade = function (activeEl) {
     const chartEl = activeEl.closest(".lg-wrap");
     if (!chartEl) return;
     chartEl
@@ -535,7 +535,7 @@
   // footprint and feel like it belongs to the popup, not the row
   // below it. Slide every bottom-corner badge down by exactly the
   // overflow amount so it lands clear of the open popover.
-  window.LiveGanttHooks.LgBarPopover._pushBottomBadges = function (activeEl, popover) {
+  window.PhoenixLiveGanttHooks.LgBarPopover._pushBottomBadges = function (activeEl, popover) {
     const chartEl = activeEl.closest(".lg-wrap");
     if (!chartEl) return;
 
@@ -567,7 +567,7 @@
 
   // Reset transforms on bottom-corner badges so they slide back to
   // their natural position when the popover closes.
-  window.LiveGanttHooks.LgBarPopover._restoreBottomBadges = function (activeEl) {
+  window.PhoenixLiveGanttHooks.LgBarPopover._restoreBottomBadges = function (activeEl) {
     const chartEl = activeEl.closest(".lg-wrap");
     if (!chartEl) return;
 
@@ -579,11 +579,11 @@
   };
 
   // Log initialization
-  var hookCount = Object.keys(window.LiveGanttHooks).length;
+  var hookCount = Object.keys(window.PhoenixLiveGanttHooks).length;
   if (typeof console !== "undefined" && console.debug) {
     console.debug(
-      "[LiveGantt] Initialized with " + hookCount + " hook(s):",
-      Object.keys(window.LiveGanttHooks)
+      "[PhoenixLiveGantt] Initialized with " + hookCount + " hook(s):",
+      Object.keys(window.PhoenixLiveGanttHooks)
     );
   }
 })();

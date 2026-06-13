@@ -1,7 +1,7 @@
-defmodule LiveGantt.PathFormatTest do
+defmodule PhoenixLiveGantt.PathFormatTest do
   use ExUnit.Case, async: true
 
-  alias LiveGantt.PathFormat
+  alias PhoenixLiveGantt.PathFormat
 
   describe "forward/5" do
     test "builds the canonical 3-segment path" do

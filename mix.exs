@@ -1,4 +1,4 @@
-defmodule LiveGantt.MixProject do
+defmodule PhoenixLiveGantt.MixProject do
   use Mix.Project
 
   @version "0.1.0"
@@ -7,7 +7,7 @@ defmodule LiveGantt.MixProject do
 
   def project do
     [
-      app: :live_gantt,
+      app: :phoenix_live_gantt,
       version: @version,
       description: @description,
       elixir: "~> 1.15",
@@ -17,7 +17,7 @@ defmodule LiveGantt.MixProject do
       package: package(),
       docs: docs(),
       aliases: aliases(),
-      name: "LiveGantt",
+      name: "PhoenixLiveGantt",
       source_url: @source_url
     ]
   end
@@ -56,7 +56,7 @@ defmodule LiveGantt.MixProject do
 
   defp package do
     [
-      name: "live_gantt",
+      name: "phoenix_live_gantt",
       maintainers: ["mdon"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
@@ -66,7 +66,7 @@ defmodule LiveGantt.MixProject do
 
   defp docs do
     [
-      main: "LiveGantt",
+      main: "PhoenixLiveGantt",
       source_ref: "v#{@version}",
       extras: ["README.md", "CHANGELOG.md"]
     ]

@@ -1,4 +1,4 @@
-defmodule LiveGantt.Utils.I18n do
+defmodule PhoenixLiveGantt.Utils.I18n do
   @moduledoc """
   Minimal translation helper for Gantt labels + month names.
 
