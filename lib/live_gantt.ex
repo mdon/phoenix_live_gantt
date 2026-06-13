@@ -146,7 +146,7 @@ defmodule LiveGantt do
   attr :window_start, NaiveDateTime,
     default: nil,
     doc:
-      "Optional sub-day positioning origin. When `window_start`/`window_end` are both `NaiveDateTime`s, the axis starts/ends at those exact instants instead of `date_range`'s midnight-to-midnight span — useful at `:hour`/`:min15`/`:min5` zoom to begin ~1 column before the first task rather than at midnight (a wall of empty pre-task columns). Snap `window_start` to a column-slot boundary so labels land on round clock times. `date_range` is still used for non-positioning concerns (event partition, edge counts), so keep it covering the same window."
+      "Optional sub-day positioning origin. When `window_start`/`window_end` are both `NaiveDateTime`s, the window becomes the axis: it drives the start/end instants, the columns, event partition (in-window vs the `← N earlier / N later →` edge counts), and the today marker — instead of `date_range`'s midnight-to-midnight span. Useful at `:hour`/`:min15`/`:min5` zoom to begin ~1 column before the first task rather than at midnight (a wall of empty pre-task columns). Snap `window_start` to a column-slot boundary so labels land on round clock times. `date_range` remains required as the base axis and is used whenever the window is absent or non-positive, so keep it covering the same span."
 
   attr :window_end, NaiveDateTime,
     default: nil,
@@ -599,15 +599,21 @@ defmodule LiveGantt do
 
     # A sub-day window (NaiveDateTime origin) MUST build its headers from the
     # window too, or they disagree with the window-positioned bars. Always take
-    # the window-column path when the origin is intra-day — using the
-    # granularity's slot, or falling back to hourly slots if the column budget
-    # demoted the granularity below sub-day (a wide sub-day window). Only a
-    # whole-day `Date` origin uses the date-range column builders.
+    # the window-column path when the origin is intra-day, using the
+    # budget-capped granularity's slot — which may be a whole day or coarser for a
+    # wide sub-day window (so columns stay legible instead of smearing thousands of
+    # hourly divs). Only a whole-day `Date` origin uses the date-range builders.
     columns =
       case origin do
         %NaiveDateTime{} ->
-          slot = if granularity in [:hour, :min15, :min5], do: slot_minutes(granularity), else: 60
-          window_columns(origin, span_days, day_px, slot, today, assigns.translations)
+          window_columns(
+            origin,
+            span_days,
+            day_px,
+            slot_minutes(granularity),
+            today,
+            assigns.translations
+          )
 
         _ ->
           build_columns(range, granularity, day_px, today, assigns.translations)
@@ -1094,6 +1100,9 @@ defmodule LiveGantt do
                   data-group={get_group(event)}
                   data-parent-id={parent_id_of(event)}
                   phx-hook={@enable_hooks && "LgBarPopover"}
+                  tabindex={@enable_hooks && "0"}
+                  role={@enable_hooks && "button"}
+                  aria-haspopup={@enable_hooks && "dialog"}
                   data-popover-target={label_pop_id}
                 >
                   <.subproject_chevron
@@ -1814,10 +1823,16 @@ defmodule LiveGantt do
 
   defp pad2(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 
-  # Minutes per column slot for a sub-day granularity. Drives `window_columns`.
-  defp slot_minutes(:hour), do: 60
-  defp slot_minutes(:min15), do: 15
+  # Minutes per column slot for a granularity. Drives `window_columns`. Covers
+  # the coarse granularities too (a wide sub-day window whose budget-capped
+  # granularity demoted to :day/:week/:month) so `window_columns` builds
+  # day-or-coarser slots instead of smearing thousands of hourly columns.
   defp slot_minutes(:min5), do: 5
+  defp slot_minutes(:min15), do: 15
+  defp slot_minutes(:hour), do: 60
+  defp slot_minutes(:day), do: 1440
+  defp slot_minutes(:week), do: 10_080
+  defp slot_minutes(:month), do: 43_200
 
   # Columns for a sub-day positioning window (origin is a NaiveDateTime partway
   # through a day, not a midnight Date). `build_columns`/`sub_hour_columns`
@@ -1828,9 +1843,11 @@ defmodule LiveGantt do
   # 5-minute gridlines stay blank). The consumer snaps `window_start` to a slot
   # boundary so these labels land on round times.
   defp window_columns(%NaiveDateTime{} = origin, span_days, day_px, minutes_per_slot, today, tr) do
-    slots_per_day = div(1440, minutes_per_slot)
-    col_px = round(day_px / slots_per_day)
-    num_slots = max(round(span_days * slots_per_day), 1)
+    # Width/count keyed straight off minutes (not slots-per-day), so a whole-day
+    # or coarser slot — used when a wide sub-day window's granularity demotes —
+    # works as well as a sub-hour one (slots-per-day would floor to 0 and divide).
+    col_px = max(round(day_px * minutes_per_slot / 1440), 1)
+    num_slots = max(round(span_days * 1440 / minutes_per_slot), 1)
     now = if match?(%DateTime{}, today) or match?(%NaiveDateTime{}, today), do: today, else: nil
 
     for i <- 0..(num_slots - 1) do
@@ -1840,6 +1857,11 @@ defmodule LiveGantt do
 
       label =
         cond do
+          # A day-or-coarser slot is one column per day (or week/month) — label
+          # each with its date, not a clock time.
+          minutes_per_slot >= 1440 ->
+            "#{I18n.month_name_short(date.month, tr)} #{date.day}"
+
           minute_of_day == 0 ->
             "#{I18n.month_name_short(date.month, tr)} #{date.day}"
 
@@ -2352,9 +2374,11 @@ defmodule LiveGantt do
   # side of each bar the arrow exits/enters, so a sibling x WEST of
   # an FF arrow's east-east endpoints would force a 180° loop.
   defp valid_range_for_type(f, paths, idx) do
-    type = paths |> Enum.at(idx) |> Map.get(:type, :fs)
+    path = Enum.at(paths, idx)
+    type = Map.get(path, :type, :fs)
+    tgt_ms = Map.get(path, :target_milestone, false)
     {src_exit, tgt_entry} = exit_entry_for(type)
-    mid_valid_range(f.x1, f.arrow_stop, src_exit, tgt_entry)
+    mid_valid_range(f.x1, f.arrow_stop, src_exit, tgt_entry, tgt_ms)
   end
 
   defp exit_entry_for(:fs), do: {:east, :west}
@@ -2633,8 +2657,10 @@ defmodule LiveGantt do
     #   2. (NEW) For :fs forward, check if the trunk's preferred x can
     #      actually avoid all intermediate bars. If not, force detour —
     #      its routing-via-row-border avoids the bars entirely.
+    tgt_ms = milestone?(geom.to_event)
+
     fs_detour? =
-      use_detour?(conn, x1, arrow_stop, backward?, label_w) or
+      use_detour?(conn, x1, arrow_stop, backward?, label_w, tgt_ms) or
         forward_path_unfeasible?(conn, x1, y1, arrow_stop, y2, geom, route, routing_ctx)
 
     {d, label_x, label_y, label_transform} =
@@ -2764,15 +2790,16 @@ defmodule LiveGantt do
   #   :detour — always detour, even with a wide gap
   #   :auto   — detour only when the gap is too tight for clean stems
   #             or the label doesn't fit between the bars
-  defp use_detour?(%{type: :fs, shape: :direct}, _x1, _arrow_stop, backward?, _label_w),
+  defp use_detour?(%{type: :fs, shape: :direct}, _x1, _arrow_stop, backward?, _label_w, _tgt_ms),
     do: backward?
 
-  defp use_detour?(%{type: :fs, shape: :detour}, _x1, _arrow_stop, _backward?, _label_w), do: true
+  defp use_detour?(%{type: :fs, shape: :detour}, _x1, _arrow_stop, _backward?, _label_w, _tgt_ms),
+    do: true
 
-  defp use_detour?(%{type: :fs}, x1, arrow_stop, backward?, label_w),
-    do: backward? or forward_fs_needs_detour?(x1, arrow_stop, label_w)
+  defp use_detour?(%{type: :fs}, x1, arrow_stop, backward?, label_w, tgt_ms),
+    do: backward? or forward_fs_needs_detour?(x1, arrow_stop, label_w, tgt_ms)
 
-  defp use_detour?(_conn, _x1, _arrow_stop, _backward?, _label_w), do: false
+  defp use_detour?(_conn, _x1, _arrow_stop, _backward?, _label_w, _tgt_ms), do: false
 
   # True when the forward 3-seg path can't place its trunk x without
   # piercing an intermediate bar. Only applies to :fs (other types have
@@ -2790,6 +2817,7 @@ defmodule LiveGantt do
       false
     else
       elbow = Map.get(route, :exit_stem, @elbow_px)
+      tgt_ms = milestone?(geom.to_event)
 
       base_mid =
         choose_mid_x(
@@ -2800,11 +2828,15 @@ defmodule LiveGantt do
           geom.source_fanout,
           geom.target_fanin,
           Map.get(route, :label_width, 0),
-          elbow
+          elbow,
+          tgt_ms
         )
 
-      preferred_mid = base_mid + forward_stagger_offset(geom, route, ctx)
-      {min_x, max_x} = mid_valid_range(x1, arrow_stop, route.source_exit, route.target_entry)
+      {min_x, max_x} =
+        mid_valid_range(x1, arrow_stop, route.source_exit, route.target_entry, tgt_ms)
+
+      preferred_mid =
+        (base_mid + forward_stagger_offset(geom, route, ctx)) |> max(min_x) |> min(max_x)
 
       bars_in_span = bars_crossing_span(ctx.bars, y1, y2, route.exclude_ids)
 
@@ -3042,6 +3074,10 @@ defmodule LiveGantt do
   # otherwise pierce.
   defp build_forward_path(x1, y1, arrow_stop, y2, geom, ctx, route) do
     elbow = Map.get(route, :exit_stem, @elbow_px)
+    tgt_ms = milestone?(geom.to_event)
+
+    {min_x, max_x} =
+      range = mid_valid_range(x1, arrow_stop, route.source_exit, route.target_entry, tgt_ms)
 
     base_mid =
       choose_mid_x(
@@ -3052,25 +3088,23 @@ defmodule LiveGantt do
         geom.source_fanout,
         geom.target_fanin,
         Map.get(route, :label_width, 0),
-        elbow
+        elbow,
+        tgt_ms
       )
 
     # Stagger trunk x by lane offset when this arrow is part of a fan-out
     # bus with `bus_stagger_outgoing_px > 0` or fan-in bus with
     # `bus_stagger_incoming_px > 0`. No-op (offset=0) when stagger is off
-    # or when this arrow isn't sharing a bus with siblings.
-    preferred_mid = base_mid + forward_stagger_offset(geom, route, ctx)
+    # or when this arrow isn't sharing a bus with siblings. CLAMP into the valid
+    # range so a stagger lane can't push the trunk past the target-approach floor
+    # (which would detach a milestone head) or in front of the exit stem — the
+    # milestone floor is baked into `range`/`choose_mid_x`, so collision
+    # avoidance, feasibility, and consolidation all see it (no post-clamp that
+    # could re-pierce a bar collision avoidance just dodged).
+    preferred_mid =
+      (base_mid + forward_stagger_offset(geom, route, ctx)) |> max(min_x) |> min(max_x)
 
-    mid_x =
-      maybe_shift_trunk(
-        preferred_mid,
-        y1,
-        y2,
-        mid_valid_range(x1, arrow_stop, route.source_exit, route.target_entry),
-        route.exclude_ids,
-        ctx
-      )
-      |> enforce_milestone_approach(arrow_stop, route.target_entry, milestone?(geom.to_event))
+    mid_x = maybe_shift_trunk(preferred_mid, y1, y2, range, route.exclude_ids, ctx)
 
     d = PathFormat.forward(x1, y1, mid_x, y2, arrow_stop)
 
@@ -3087,22 +3121,17 @@ defmodule LiveGantt do
     {d, label_x, label_y, label_transform}
   end
 
-  # A milestone target's arrowhead is nudged @milestone_edge_px out along the
-  # final approach segment (the last `H arrow_stop` leg), so that leg must be at
-  # least that long (+2px margin) or the fixed-px head lands off the shaft at a
-  # low fill factor. Push the trunk away from the target on the entry side. This
-  # is the forward-path twin of `build_fs_detour_path`'s `base_entry` floor; it
-  # covers all four dep types (entry is :west for FS/SS, :east for FF/SF) and any
-  # `fanin`/`fanout` preference that would otherwise hug the target.
-  defp enforce_milestone_approach(mid, _arrow_stop, _entry, false), do: mid
+  # Minimum distance from `arrow_stop` to the trunk on the TARGET-entry side. A
+  # milestone target's fixed-px arrowhead is nudged `@milestone_edge_px` out, so
+  # the final approach leg must be at least that + 2px or the head lands off the
+  # shaft at a low fill factor. `@min_approach_px` == `@elbow_px` (10), so a
+  # non-milestone target is unchanged. Used uniformly by `choose_mid_x`,
+  # `mid_valid_range`, and `forward_fs_needs_detour?` so the floor is part of the
+  # routing decision rather than a post-clamp.
+  defp target_approach_min(false), do: @min_approach_px
+  defp target_approach_min(true), do: @milestone_edge_px + 2
 
-  defp enforce_milestone_approach(mid, arrow_stop, :west, true),
-    do: min(mid, arrow_stop - (@milestone_edge_px + 2))
-
-  defp enforce_milestone_approach(mid, arrow_stop, :east, true),
-    do: max(mid, arrow_stop + (@milestone_edge_px + 2))
-
-  defp choose_mid_x(x1, arrow_stop, :east, :west, fanout, fanin, _label_w, elbow) do
+  defp choose_mid_x(x1, arrow_stop, :east, :west, fanout, fanin, _label_w, elbow, tgt_ms) do
     # FS — stems point at each other; trunk lives BETWEEN them.
     #
     # Clearance constraints (enforced via clamp below):
@@ -3113,7 +3142,7 @@ defmodule LiveGantt do
     # minimums — tight gaps are routed via `build_fs_detour_path` in
     # `build_path`, so no degenerate-fallback case is needed here.
     min_mid = x1 + @min_exit_stem_px
-    max_mid = arrow_stop - @min_approach_px
+    max_mid = arrow_stop - target_approach_min(tgt_ms)
 
     preferred =
       cond do
@@ -3125,14 +3154,14 @@ defmodule LiveGantt do
     preferred |> max(min_mid) |> min(max_mid)
   end
 
-  defp choose_mid_x(x1, arrow_stop, :west, :west, fanout, fanin, label_w, elbow) do
+  defp choose_mid_x(x1, arrow_stop, :west, :west, fanout, fanin, label_w, elbow, tgt_ms) do
     # SS — both stems exit west; trunk sits west of the earliest of
     # the two. Labels ride the vertical trunk, so when present we push
     # the offset further west by label_half + clearance to keep the
     # label out of the source/target bar x-range.
     offset = label_aware_offset(label_w, elbow)
     stem_out = x1 - offset
-    stem_in = arrow_stop - offset
+    stem_in = arrow_stop - max(offset, target_approach_min(tgt_ms))
 
     cond do
       fanout > 1 -> stem_out
@@ -3141,12 +3170,12 @@ defmodule LiveGantt do
     end
   end
 
-  defp choose_mid_x(x1, arrow_stop, :east, :east, fanout, fanin, label_w, elbow) do
+  defp choose_mid_x(x1, arrow_stop, :east, :east, fanout, fanin, label_w, elbow, tgt_ms) do
     # FF — both stems exit east; trunk sits east of the latest of
     # the two. Label pushes trunk further east.
     offset = label_aware_offset(label_w, elbow)
     stem_out = x1 + offset
-    stem_in = arrow_stop + offset
+    stem_in = arrow_stop + max(offset, target_approach_min(tgt_ms))
 
     cond do
       fanout > 1 -> stem_out
@@ -3155,14 +3184,14 @@ defmodule LiveGantt do
     end
   end
 
-  defp choose_mid_x(x1, arrow_stop, :west, :east, fanout, fanin, label_w, elbow) do
+  defp choose_mid_x(x1, arrow_stop, :west, :east, fanout, fanin, label_w, elbow, tgt_ms) do
     # SF — source exits west, target enters from east. Routing around
     # the right side (east of target_end) keeps the arrow tangent
     # aligned with the target_entry direction. Trunk sits east of
     # target; push further east for label.
     label_offset = label_aware_offset(label_w, elbow)
     stem_out = x1 - elbow
-    stem_in = arrow_stop + label_offset
+    stem_in = arrow_stop + max(label_offset, target_approach_min(tgt_ms))
 
     cond do
       fanout > 1 -> stem_out
@@ -3192,9 +3221,12 @@ defmodule LiveGantt do
   #     enough for the label to sit between the bars on the vertical
   #     trunk without overlapping them. If not, switch to detour —
   #     the label then sits on the horizontal leg.
-  defp forward_fs_needs_detour?(x1, arrow_stop, label_w) do
+  defp forward_fs_needs_detour?(x1, arrow_stop, label_w, tgt_ms) do
     gap = arrow_stop - x1
-    base_min = @min_exit_stem_px + @min_approach_px
+    # Tight gaps into a milestone need the wider approach floor, so they fall to
+    # the detour (which handles the milestone approach via its own `base_entry`)
+    # rather than a forward path that can't fit exit stem + approach.
+    base_min = @min_exit_stem_px + target_approach_min(tgt_ms)
 
     label_min =
       if label_w > 0,
@@ -3641,29 +3673,30 @@ defmodule LiveGantt do
   # given exit/entry combination. The forward path shape `M x1 H mid V y2
   # H x2` requires mid_x to sit on the correct side of each stem for the
   # arrow tangent to orient properly.
-  defp mid_valid_range(x1, arrow_stop, :east, :west) do
+  defp mid_valid_range(x1, arrow_stop, :east, :west, tgt_ms) do
     # FS — between source_exit (min stem) and target_approach (arrow
     # marker clearance). Matches the clamp range used in `choose_mid_x`
     # so collision avoidance shifts the trunk within the same shape-
-    # preserving bounds rather than into arrowhead territory.
-    {x1 + @min_exit_stem_px, arrow_stop - @min_approach_px}
+    # preserving bounds rather than into arrowhead territory. The
+    # target-approach floor widens for a milestone target.
+    {x1 + @min_exit_stem_px, arrow_stop - target_approach_min(tgt_ms)}
   end
 
-  defp mid_valid_range(x1, arrow_stop, :west, :west) do
-    # SS — west of both stems.
-    cap = min(x1, arrow_stop) - @elbow_px
+  defp mid_valid_range(x1, arrow_stop, :west, :west, tgt_ms) do
+    # SS — west of both stems (and ≥ the target approach floor west of arrow_stop).
+    cap = min(x1 - @elbow_px, arrow_stop - target_approach_min(tgt_ms))
     {cap - 10_000, cap}
   end
 
-  defp mid_valid_range(x1, arrow_stop, :east, :east) do
-    # FF — east of both stems.
-    floor = max(x1, arrow_stop) + @elbow_px
+  defp mid_valid_range(x1, arrow_stop, :east, :east, tgt_ms) do
+    # FF — east of both stems (and ≥ the target approach floor east of arrow_stop).
+    floor = max(x1 + @elbow_px, arrow_stop + target_approach_min(tgt_ms))
     {floor, floor + 10_000}
   end
 
-  defp mid_valid_range(x1, arrow_stop, :west, :east) do
+  defp mid_valid_range(x1, arrow_stop, :west, :east, tgt_ms) do
     # SF — east of max(x1, arrow_stop), routing around the right side.
-    floor = max(x1, arrow_stop) + @elbow_px
+    floor = max(x1 + @elbow_px, arrow_stop + target_approach_min(tgt_ms))
     {floor, floor + 10_000}
   end
 
@@ -5143,8 +5176,16 @@ defmodule LiveGantt do
   # A `Date` today has no time-of-day, so center the marker in its day; a
   # `DateTime`/`NaiveDateTime` "now" lands at its exact position (precise at
   # hour zoom).
-  defp today_left_px(%Date{} = today, {origin, _span}, day_px),
-    do: x_px(today, origin, day_px) + div(day_px, 2)
+  defp today_left_px(%Date{} = today, {origin, span_days}, day_px) do
+    noon = x_px(today, origin, day_px) + div(day_px, 2)
+    # `today_in_range?` admits a `Date` whenever its whole day overlaps the window
+    # (`fd > -1`), but in a sub-day window the noon anchor can land outside the
+    # visible span — drawing the marker off-screen with no directional pill. Clamp
+    # it to the window's near edge so an overlapping day always shows a marker.
+    lo = @axis_pad_px
+    hi = @axis_pad_px + round(span_days * day_px)
+    noon |> max(lo) |> min(hi)
+  end
 
   defp today_left_px(today, {origin, _span}, day_px), do: x_px(today, origin, day_px)
 

@@ -181,7 +181,7 @@ defmodule LiveGantt.TestHelpersTest do
 
     # Arrow tip should never overlap the target bar (4px gap default
     # for non-milestone targets after refX=6 fix).
-    test "arrow tips clear target bars by at least 1px (regression for refX gap bug)" do
+    test "arrow tips land on (not inside) target bars (regression for refX gap bug)" do
       events = [
         %LiveGantt.Task{
           id: "a",

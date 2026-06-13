@@ -158,6 +158,45 @@ defmodule LiveGanttTest do
       refute html =~ "w-0.5 bg-error"
     end
 
+    test "a Date today clamps onto a sub-day afternoon window (N5)" do
+      # A bare Date today (noon-anchored) overlaps an afternoon sub-day window, so
+      # the whole-day overlap test shows the marker (no off-screen pill). But noon
+      # (12:00) sits LEFT of a 13:00–18:00 window, so the un-clamped marker would
+      # draw at a negative left% — off-screen with nothing to see. It must pin to
+      # the window's near (left) edge instead.
+      events = [
+        %LiveGantt.Task{
+          id: "t",
+          title: "T",
+          start: ~N[2026-04-01 14:00:00],
+          end: ~N[2026-04-01 16:00:00]
+        }
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-04-01], ~D[2026-04-01]),
+        today: ~D[2026-04-01],
+        ws: ~N[2026-04-01 13:00:00],
+        we: ~N[2026-04-01 18:00:00]
+      }
+
+      html =
+        render(~H[<.gantt
+  id="w"
+  events={@events}
+  date_range={@range}
+  today={@today}
+  zoom={:hour}
+  window_start={@ws}
+  window_end={@we}
+/>])
+
+      assert html =~ "lg-today", "today marker should render for an overlapping day"
+      [_, left] = Regex.run(~r/lg-today[^>]*left:\s*([\d.-]+)%/, html)
+      assert String.to_float(left) >= 0.0, "today marker clamped off-screen at left: #{left}%"
+    end
+
     test "renders with day zoom" do
       range = Date.range(~D[2026-04-01], ~D[2026-04-14])
 
@@ -1497,10 +1536,11 @@ defmodule LiveGanttTest do
     end
 
     test "a NaiveDateTime window drives the columns even when granularity demotes (M3)" do
-      # An intra-day origin must build its headers from the WINDOW, not the
-      # date_range — otherwise headers (date-range midnights) disagree with the
-      # window-positioned bars. At :day zoom over a 2-day NDT window, the columns
-      # come from the window (hourly fallback → many columns), not 2 day columns.
+      # An intra-day origin builds its headers from the WINDOW, not the date_range
+      # — otherwise headers (date-range midnights) disagree with the
+      # window-positioned bars. At :day zoom the budget-capped granularity is :day,
+      # so a 2-day window yields 2 day columns — the WINDOW's span, not the 10-day
+      # date_range's, and not an hourly smear (axis spacers carry no header class).
       events = [
         %LiveGantt.Task{
           id: "t",
@@ -1512,7 +1552,8 @@ defmodule LiveGanttTest do
 
       assigns = %{
         events: events,
-        range: Date.range(~D[2026-04-01], ~D[2026-04-02]),
+        # 10-day date_range, deliberately wider than the 2-day window.
+        range: Date.range(~D[2026-04-01], ~D[2026-04-10]),
         ws: ~N[2026-04-01 00:00:00],
         we: ~N[2026-04-03 00:00:00]
       }
@@ -1528,7 +1569,45 @@ defmodule LiveGanttTest do
 />])
 
       col_count = (html |> String.split("lg-col-header") |> length()) - 1
-      assert col_count > 2, "expected window-based columns, got #{col_count}"
+      # Window-driven (2, not the 10-day range's 10) and demoted to days (not a
+      # 48-column hourly smear).
+      assert col_count == 2, "expected 2 day columns, got #{col_count}"
+    end
+
+    test "a wide NaiveDateTime window demotes to day columns instead of smearing (N3)" do
+      # The old fallback hardcoded hourly slots whenever the granularity demoted
+      # below sub-day, so a wide NDT window produced one column PER HOUR — a
+      # 60-day window meant ~1440 two-pixel columns. The budget-capped granularity
+      # (:day here) must drive the slot, giving ~60 day columns.
+      events = [
+        %LiveGantt.Task{
+          id: "t",
+          title: "T",
+          start: ~N[2026-04-01 06:00:00],
+          end: ~N[2026-04-01 10:00:00]
+        }
+      ]
+
+      assigns = %{
+        events: events,
+        range: Date.range(~D[2026-04-01], ~D[2026-06-01]),
+        ws: ~N[2026-04-01 00:00:00],
+        we: ~N[2026-05-31 00:00:00]
+      }
+
+      html =
+        render(~H[<.gantt
+  id="w2"
+  events={@events}
+  date_range={@range}
+  zoom={:day}
+  window_start={@ws}
+  window_end={@we}
+/>])
+
+      col_count = (html |> String.split("lg-col-header") |> length()) - 1
+      # 60 day columns + 2 spacers — emphatically not 60×24 hourly columns.
+      assert col_count in 60..64, "expected ~60 day columns, got #{col_count}"
     end
   end
 
@@ -1756,15 +1835,45 @@ defmodule LiveGanttTest do
       html =
         render(~H"<.gantt events={@events} date_range={@range} connectors={@connectors} />")
 
-      approaches =
-        Regex.scan(~r/d="M \d+ \d+ H (\d+) V \d+ H (\d+)"/, html)
-        |> Enum.map(fn [_, mid, stop] -> String.to_integer(stop) - String.to_integer(mid) end)
+      segs =
+        Regex.scan(~r/d="M (\d+) \d+ H (\d+) V \d+ H (\d+)"/, html)
+        |> Enum.map(fn [_, x1, mid, stop] ->
+          {String.to_integer(x1), String.to_integer(mid), String.to_integer(stop)}
+        end)
 
-      assert length(approaches) == 2, "expected 2 forward paths, got #{length(approaches)}"
+      assert length(segs) == 2, "expected 2 forward paths, got #{length(segs)}"
 
-      Enum.each(approaches, fn approach ->
-        assert approach >= 14, "milestone-target approach #{approach}px < 14px (head detaches)"
+      Enum.each(segs, fn {x1, mid, stop} ->
+        # The floor is folded into the router (not a post-clamp), so the exit
+        # stem stays ≥ @min_exit_stem_px (6) AND the approach ≥ 14.
+        assert stop - mid >= 14,
+               "milestone-target approach #{stop - mid}px < 14px (head detaches)"
+
+        assert mid - x1 >= 6, "exit stem #{mid - x1}px < @min_exit_stem_px (6)"
       end)
+    end
+
+    test "a tight gap into a milestone routes via detour (not a squished forward stem)" do
+      # FS into a milestone needs exit (6) + approach (14) = 20px of gap for a
+      # clean forward path. A narrower gap must fall to the 5-segment detour
+      # rather than a forward path with a sub-6px exit stem. day_width_px=18 makes
+      # the 1-day gap 18px (< 20).
+      events = [
+        %LiveGantt.Task{id: "s", start: ~D[2026-04-01], end: ~D[2026-04-05], extra: %{order: 1}},
+        %LiveGantt.Task{id: "m", start: ~D[2026-04-06], end: ~D[2026-04-06], extra: %{order: 2}}
+      ]
+
+      connectors = [%{from: "s", to: "m"}]
+      assigns = %{events: events, range: sample_range(), connectors: connectors}
+
+      html =
+        render(
+          ~H"<.gantt events={@events} date_range={@range} connectors={@connectors} day_width_px={18} />"
+        )
+
+      # 5-segment detour has TWO vertical segments; a forward path has one.
+      assert Regex.match?(~r/d="M \d+ \d+ H \d+ V \d+ H \d+ V \d+ H \d+"/, html),
+             "tight milestone gap should route via detour"
     end
   end
 
@@ -3964,9 +4073,10 @@ defmodule LiveGanttTest do
 
       # 1-day range × 96 slots/day = 96 columns.
       assert col_count(html) == 96
-      # :15 clock boundaries get labelled (in-between 5-min ticks stay blank).
+      # Every quarter-hour boundary gets a clock-time label (not just the first).
       assert html =~ "0:15"
-      assert html =~ ":15"
+      assert html =~ "0:45"
+      assert html =~ "1:30"
     end
 
     test ":min5 renders 288 columns/day" do
@@ -3976,8 +4086,10 @@ defmodule LiveGanttTest do
 
       # 1-day range × 288 slots/day = 288 columns.
       assert col_count(html) == 288
-      # :15 clock boundaries still labelled at this finer zoom.
-      assert html =~ ":15"
+      # :15 clock boundaries still labelled at this finer zoom; the in-between
+      # 5-minute ticks stay blank (no "0:05"/"0:10" labels).
+      assert html =~ "0:15"
+      refute html =~ "0:05"
     end
   end
 
@@ -4104,6 +4216,50 @@ defmodule LiveGanttTest do
       assert Map.has_key?(result, "c")
       assert Map.keys(result) |> Enum.sort() == ["a", "b", "c"]
     end
+
+    test "a cycle of nil-duration sub-project heads lays out flat (no crash)" do
+      # Cycle members that *head* a sub-tree carry no usable duration — a nil
+      # duration would hit `advance` arithmetic on nil. The flat pass must treat
+      # nil as "no duration" and give each a min_span slot instead of crashing.
+      items = [
+        %{id: "a", parent_id: "b", duration: nil},
+        %{id: "b", parent_id: "a", duration: nil},
+        %{id: "c", parent_id: nil, duration: 2}
+      ]
+
+      result =
+        LiveGantt.Layout.sequential(items,
+          start: ~D[2026-04-01],
+          id: & &1.id,
+          parent_id: & &1.parent_id,
+          duration: & &1.duration
+        )
+
+      assert Map.keys(result) |> Enum.sort() == ["a", "b", "c"]
+      # nil-duration members get a >= min_span (1 day) slot, not a zero/negative bar.
+      assert Date.diff(result["a"].end, result["a"].start) >= 1
+      assert Date.diff(result["b"].end, result["b"].start) >= 1
+    end
+
+    test "a cycle whose accessor raises (no :duration key) still lays out flat" do
+      # Default duration accessor is `& &1.duration`; a map lacking that key would
+      # raise KeyError mid-layout. The flat pass rescues the accessor and falls
+      # back to a min_span slot rather than taking down the whole chart.
+      items = [
+        %{id: "a", parent_id: "b"},
+        %{id: "b", parent_id: "a"},
+        %{id: "c", parent_id: nil, duration: 2}
+      ]
+
+      result =
+        LiveGantt.Layout.sequential(items,
+          start: ~D[2026-04-01],
+          id: & &1.id,
+          parent_id: & &1.parent_id
+        )
+
+      assert Map.keys(result) |> Enum.sort() == ["a", "b", "c"]
+    end
   end
 
   describe "a11y + hook gating (M5 regression)" do
@@ -4134,6 +4290,20 @@ defmodule LiveGanttTest do
 
       assert html =~ ~s(tabindex="0")
       assert html =~ ~s(role="button")
+    end
+
+    test "enable_hooks adds keyboard a11y attrs to label rows too (N7)" do
+      assigns = %{events: a11y_events(), range: sample_range()}
+
+      html =
+        render(~H[<.gantt id="g" events={@events} date_range={@range} enable_hooks={true} />])
+
+      # The label row carries the LgBarPopover hook, so it must also be
+      # keyboard-focusable and announced as a popover trigger — same as the bars.
+      [label_tag] = Regex.run(~r/<div[^>]*class="lg-label[ "][^>]*>/, html)
+      assert label_tag =~ ~s(tabindex="0")
+      assert label_tag =~ ~s(role="button")
+      assert label_tag =~ ~s(aria-haspopup="dialog")
     end
 
     test "enable_hooks=false (default) omits tabindex/role on bars" do

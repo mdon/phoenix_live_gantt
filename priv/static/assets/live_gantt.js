@@ -156,10 +156,15 @@
         if (e.target !== this.el) return;
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
-        e.stopPropagation();
         const wasOpen = this._isOpen();
-        this._toggle();
-        if (!wasOpen) {
+        // Dispatch a REAL click so keyboard activation is identical to a mouse
+        // click: it toggles the popover (via `_onClick`) AND fires any phx-click
+        // (`on_event_click`). Calling `_toggle()` directly would open the popover
+        // but silently skip the server event a mouse user gets. `_onClick` stops
+        // propagation, so this synthetic click won't reach the global
+        // outside-click handler (same as a mouse click).
+        this.el.click();
+        if (!wasOpen && this._isOpen()) {
           // Moved focus INTO the popover so Tab cycles its actions and Escape
           // closes in context. Made programmatically focusable (tabindex -1).
           const p = this._popover();
@@ -386,6 +391,12 @@
       if (bar.dataset.popoverOpen !== "true") return;
       const popoverId = bar.dataset.popoverTarget;
       const popover = popoverId ? document.getElementById(popoverId) : null;
+      // Keyboard close (Escape routes here): if focus is inside this popover,
+      // return it to the trigger so it isn't lost to <body>. The instance
+      // `_close` does this too, but Escape goes through the global handler.
+      if (popover && popover.contains(document.activeElement)) {
+        bar.focus({ preventScroll: true });
+      }
       if (popover) popover.classList.add("hidden");
       delete bar.dataset.popoverOpen;
       const wrap = bar.closest(".lg-wrap");

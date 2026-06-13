@@ -64,10 +64,12 @@ defmodule LiveGantt.Layout do
 
   `end` is exclusive, matching `LiveGantt.gantt/1` (a one-day bar is
   `start..start+1`). Every id in `items` appears in the result, including
-  sub-project parents (sized to span their children). Items whose `parent_id`
-  forms a cycle, points at themselves, or nests past the internal depth cap are
-  laid out flat after the main chain rather than dropped — so `result[id]` is
-  always safe.
+  sub-project parents (sized to span their children). Any item the tree walk
+  can't reach from a root — one whose `parent_id` forms a cycle, points at
+  itself, or nests past the internal depth cap, **plus every descendant of such
+  an item** (their chain to a root runs through the unreachable one) — is laid
+  out flat after the main chain rather than dropped, so `result[id]` is always
+  safe.
 
   ## Options
 
@@ -128,8 +130,33 @@ defmodule LiveGantt.Layout do
     # appended after the main chain. Passing `depth: @max_depth` disables the
     # sub-tree descent so a cycle can't re-trigger the same drop.
     missing = Enum.reject(items, &Map.has_key?(spans, id_fun.(&1)))
-    {spans, _cursor} = walk(missing, cursor, ctx, @max_depth, spans)
+    {spans, _cursor} = lay_flat(missing, cursor, ctx, spans)
     spans
+  end
+
+  # Flat fallback for the items the recursive walk never reached — `parent_id`
+  # cycles, self-parents, over-depth nests. No recursion (a cycle can't
+  # re-trigger), laid out in order after the main chain. These items commonly
+  # *head* a sub-tree they can't reach here, so their duration is nil or their
+  # accessor assumes a leaf shape; `flat_end/3` treats a nil result OR any
+  # accessor error as "no duration" so one degenerate item can't crash the whole
+  # layout — it gets a `min_span` placeholder instead.
+  defp lay_flat(items, cursor, ctx, acc) do
+    items
+    |> Enum.sort_by(ctx.order)
+    |> Enum.reduce({acc, cursor}, fn it, {acc, cur} ->
+      e = clamp_end(cur, flat_end(ctx, cur, it), ctx.min_span)
+      {Map.put(acc, ctx.id.(it), %{start: cur, end: e}), e}
+    end)
+  end
+
+  defp flat_end(ctx, cur, it) do
+    case ctx.dur.(it) do
+      nil -> cur
+      dur -> ctx.advance.(cur, dur, it)
+    end
+  rescue
+    _ -> cur
   end
 
   defp walk(items, cursor, ctx, depth, acc) do
@@ -146,7 +173,13 @@ defmodule LiveGantt.Layout do
           {child_acc, child_end} = walk(kids, cur, ctx, depth + 1, acc)
           {child_end, child_acc}
         else
-          {ctx.advance.(cur, ctx.dur.(it), it), acc}
+          # A leaf advances by its own duration. A depth-capped sub-project head
+          # (kids present, but we've stopped descending at @max_depth) may carry no
+          # usable duration — fall back to the cursor so `clamp_end` floors it to
+          # `min_span` rather than crashing on a nil duration.
+          dur = ctx.dur.(it)
+          span_end = if is_nil(dur), do: cur, else: ctx.advance.(cur, dur, it)
+          {span_end, acc}
         end
 
       e = clamp_end(cur, span_end, ctx.min_span)
