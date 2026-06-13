@@ -1049,8 +1049,12 @@ defmodule LiveGantt do
             </div>
           </div>
 
-          <%!-- Body --%>
-          <div class="flex relative">
+          <%!-- Body. `isolate` puts the whole body in its own stacking context so
+               its internal z-indexes (bars z-10 … badges z-50 … popover z-60) stay
+               LOCAL and can't paint over the sticky column header (z-20) when the
+               chart is scrolled vertically. Without it, milestones/badges/etc.
+               outrank the header and bleed on top of it. --%>
+          <div class="flex relative isolate">
             <%!-- Label column (left) --%>
             <div
               class={@label_col_class}
