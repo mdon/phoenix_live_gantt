@@ -7,6 +7,19 @@ geometry audit.
 
 <img width="1939" height="435" alt="image" src="https://github.com/user-attachments/assets/4a1a02e0-c3ac-4b78-88f2-432dbe2823a2" />
 
+**Phoenix-native, not a JavaScript wrapper — this is the part that's
+different.** Every bar, column, dependency-arrow route, milestone, and
+sub-project roll-up is computed **in Elixir** and rendered as plain HTML + SVG
+straight over the LiveView socket — there's no charting JS library, no
+`<canvas>`, and no `npm` dependency to wire up. The only JavaScript is two
+small, *optional* hooks (click-to-open popover and scroll-to-today); the chart
+draws fine without them. So it behaves like any component you already own — it
+speaks `~H`, `assigns`, and `phx-click`, survives LiveView diffs, and styles
+with your app's Tailwind/daisyUI tokens. Most "Elixir gantt" packages wrap a
+JavaScript chart library; this one is Phoenix all the way down, so the
+dependency graph, the routing math, and the rendering are all things you can
+read, test, and override in Elixir.
+
 The `gantt/1` component is **render-only**: you give it events with `start`/`end`
 **dates** and it draws bars, columns, connectors, and frames. It has no concept
 of durations, working hours, or scheduling. If your domain has *durations + an
