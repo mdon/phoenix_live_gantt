@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.3.0] — 2026-06-22
+
+Followable connector routing for dense charts, a relocated Today badge, and
+theme-aware sub-project frames.
+
+### Added
+
+- **Outer-gutter routing for long dependency skips.** When a forward arrow skips
+  down a tight "staircase" of consecutive bars with no clear channel anywhere
+  (e.g. a packed waterfall layout), the trunk now descends a clear column to the
+  LEFT of the staircase and crosses straight to the target, instead of piercing
+  or hugging an intervening task. It shares that descent with sibling arrows from
+  the same source — each branches off toward its own target — so they read as one
+  line rather than crossing strokes.
+
+### Changed
+
+- **Connector trunks keep real clearance from unrelated bars.** A forward trunk
+  aims for a comfortable gap from any bar it crosses, tightening toward a 1px
+  floor only when forced, and routes via a detour when no clear channel exists —
+  instead of running flush along a bar's edge (where it reads as part of the bar)
+  or straight through it.
+- **The "Today" badge moved to the date-header row.** It sits flush on the marker
+  line (no border seam) rather than at the top of the body, where it overlapped
+  bars and too-small-task markers.
+- **Sub-project frame colors are theme-aware.** The expanded-sub-project band now
+  uses translucent daisyUI tints (`color-mix` + the `--color-*` vars) per nesting
+  depth, so it adapts to light/dark themes and no longer washes out the label
+  text — previously an opaque light hex that looked harsh on dark themes. Override
+  `subproject_frame_color` with any CSS color to customize.
+
+### Fixed
+
+- **No dialyzer warning on the sub-project date roll-up.** The parent-span
+  roll-up uses a map-update (`%{ev | ...}`) rather than a named struct-update that
+  a generic `Enum.map` binding can't narrow to `Task` — a harmless but noisy
+  success-typing note.
+
 ## [0.2.0] — 2026-06-22
 
 Week/month axis legibility + a solid arrowhead.
