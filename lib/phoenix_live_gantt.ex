@@ -3592,7 +3592,7 @@ defmodule PhoenixLiveGantt do
          route,
          ctx
        ) do
-    descent_bars = bars_crossing_span(ctx.bars, y1, detour_y, route.exclude_ids)
+    descent_bars = bars_crossing_span(ctx.bars, y1, y2, route.exclude_ids)
 
     gutter_x =
       if Map.get(ctx, :avoid_collisions, true) and dir_sign > 0 and arrow_stop > x1 and
@@ -3604,22 +3604,12 @@ defmodule PhoenixLiveGantt do
     if gutter_x do
       exit_stub = x1 + Map.get(route, :exit_stem, @elbow_px)
 
-      # Re-clear the (now longer) bottom leg running from the gutter across to
-      # the target approach.
-      leg_y =
-        push_detour_for_horizontal_leg(
-          detour_y,
-          gutter_x,
-          stem_in,
-          y2,
-          dir_sign,
-          ctx.row_px,
-          route.exclude_ids,
-          ctx
-        )
-
-      {PathFormat.gutter(x1, y1, exit_stub, src_bottom, gutter_x, leg_y, stem_in, y2, arrow_stop),
-       leg_y, gutter_x}
+      # Exit east, drop to the source border, hop out to the gutter, then
+      # descend the gutter STRAIGHT to the target row and run across in one
+      # horizontal — a single bottom corner, no extra step-down. It's a plain
+      # detour whose two stems are the exit stub and the gutter, so the gutter
+      # column is clear top-to-bottom (`gutter_x` is left of every obstacle).
+      {PathFormat.detour(x1, y1, exit_stub, src_bottom, gutter_x, y2, arrow_stop), y2, gutter_x}
     else
       {PathFormat.detour(x1, y1, stem_out, detour_y, stem_in, y2, arrow_stop), detour_y, stem_out}
     end

@@ -11,18 +11,10 @@ defmodule PhoenixLiveGantt.PathFormat do
       :detour   — "M x1 y1 H stem_out V detour_y H stem_in V y2 H arrow_stop"
                   5 segments. Used by :fs when the forward path can't be
                   laid out cleanly (target before source, tight gap, or
-                  trunk would pierce intermediate bars).
-
-      :gutter   — "M x1 y1 H exit_stub V src_border H gutter_x V detour_y
-                   H stem_in V y2 H arrow_stop"
-                  7 segments. Used by :fs when even the detour's descending
-                  stem can't keep clearance (a tight staircase of consecutive
-                  bars with no channel): the trunk exits the source, hops out
-                  to a clear OUTER gutter, descends there fully clear of every
-                  bar, then crosses to the target. Like the consolidator's
-                  multi-hop jogs, `parse/1` leaves this `:unknown` (its segment
-                  shape is ambiguous with a jog) — the generic `points/1` /
-                  `terminal/1` walkers read it instead.
+                  trunk would pierce intermediate bars). The outer-gutter route
+                  (a long skip descending a clear column left of a tight
+                  staircase) is just a detour whose stems are the exit stub and
+                  the gutter column.
 
   Owning both the BUILDER and the PARSER here keeps `PhoenixLiveGantt` (which
   emits paths) and `PhoenixLiveGantt.Inspector` (which parses them for tests
@@ -56,28 +48,6 @@ defmodule PhoenixLiveGantt.PathFormat do
           String.t()
   def detour(x1, y1, stem_out, detour_y, stem_in, y2, arrow_stop) do
     "M #{x1} #{y1} H #{stem_out} V #{detour_y} H #{stem_in} V #{y2} H #{arrow_stop}"
-  end
-
-  @doc """
-  Build the 7-segment outer-gutter path string.
-
-      iex> PathFormat.gutter(100, 20, 110, 40, 80, 120, 160, 140, 180)
-      "M 100 20 H 110 V 40 H 80 V 120 H 160 V 140 H 180"
-  """
-  @spec gutter(
-          integer(),
-          integer(),
-          integer(),
-          integer(),
-          integer(),
-          integer(),
-          integer(),
-          integer(),
-          integer()
-        ) :: String.t()
-  def gutter(x1, y1, exit_stub, src_border, gutter_x, detour_y, stem_in, y2, arrow_stop) do
-    "M #{x1} #{y1} H #{exit_stub} V #{src_border} H #{gutter_x} " <>
-      "V #{detour_y} H #{stem_in} V #{y2} H #{arrow_stop}"
   end
 
   # ---- Parser (used by Inspector) ----
