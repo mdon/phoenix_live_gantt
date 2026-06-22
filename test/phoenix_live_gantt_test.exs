@@ -1996,6 +1996,101 @@ defmodule PhoenixLiveGanttTest do
     end
   end
 
+  describe "connector long-skip over a tight staircase" do
+    # A(row0) -> E(row4) skipping B, C, D — a chain where each task starts
+    # exactly where the previous ends, so the bars tile the x-range with NO
+    # gaps. A straight forward trunk then has no clear vertical channel at any
+    # x (every x is inside, or flush against, some intervening bar). The
+    # forward-vs-detour check used to be fooled by bar-to-bar JUNCTIONS (an x
+    # exactly between two touching bars reads as "not inside a bar") and pick a
+    # forward path, which the placer could only drive straight through an
+    # intervening task. It must now fall through to the detour and route around.
+    defp staircase_events do
+      for {id, s, e, o} <- [
+            {"A", ~D[2026-01-01], ~D[2026-01-05], 0},
+            {"B", ~D[2026-01-05], ~D[2026-01-09], 1},
+            {"C", ~D[2026-01-09], ~D[2026-01-13], 2},
+            {"D", ~D[2026-01-13], ~D[2026-01-17], 3},
+            {"E", ~D[2026-01-17], ~D[2026-01-21], 4}
+          ] do
+        %PhoenixLiveGantt.Task{id: id, start: s, end: e, extra: %{order: o}}
+      end
+    end
+
+    defp sc_content_width(html) do
+      [_, c] = Regex.run(~r/min-width: (\d+)px/, html)
+      String.to_integer(c)
+    end
+
+    defp sc_bar_box(html, id, cw) do
+      [_, l, w] =
+        Regex.run(~r/id="sc-bar-#{id}"[^>]*style="left: ([\d.]+)%; width: ([\d.]+)%/, html)
+
+      left = round(String.to_float(l) / 100 * cw)
+      {left, left + round(String.to_float(w) / 100 * cw)}
+    end
+
+    defp sc_path(html, from, to) do
+      [_, d] =
+        Regex.run(~r/\bd="([^"]*)"[^>]*data-from-id="#{from}"[^>]*data-to-id="#{to}"/, html)
+
+      d
+    end
+
+    # {x, y_top, y_bottom} of every vertical (V) segment in an H/V path
+    defp sc_verticals(tokens, x \\ 0, y \\ 0, acc \\ [])
+
+    defp sc_verticals(["M", nx, ny | rest], _x, _y, acc),
+      do: sc_verticals(rest, String.to_integer(nx), String.to_integer(ny), acc)
+
+    defp sc_verticals(["H", nx | rest], _x, y, acc),
+      do: sc_verticals(rest, String.to_integer(nx), y, acc)
+
+    defp sc_verticals(["V", ny | rest], x, y, acc) do
+      n = String.to_integer(ny)
+      sc_verticals(rest, x, n, [{x, min(y, n), max(y, n)} | acc])
+    end
+
+    defp sc_verticals([], _x, _y, acc), do: Enum.reverse(acc)
+
+    test "routes around the staircase via a detour instead of piercing a task" do
+      assigns = %{
+        events: staircase_events(),
+        range: Date.range(~D[2026-01-01], ~D[2026-01-21]),
+        conns: [%{from: "A", to: "E"}]
+      }
+
+      html =
+        render(
+          ~H[<.gantt id="sc" events={@events} connectors={@conns} date_range={@range} zoom={:day} />]
+        )
+
+      path = sc_path(html, "A", "E")
+      cw = sc_content_width(html)
+
+      # The fix forces the detour (5-segment M H V H V H) rather than the
+      # 3-segment forward (M H V H) trunk that pierced.
+      assert path =~ ~r/^M \d+ \d+ H \d+ V \d+ H \d+ V \d+ H \d+$/,
+             "A->E should route via a detour, got #{path}"
+
+      # And no vertical actually runs THROUGH an intervening bar — x strictly
+      # inside the bar AND the vertical's y-span overlaps that bar's row band.
+      # (An x at a bar edge, or a vertical that only descends through a lower
+      # row, is fine.) Default row height is 40px; B/C/D sit in rows 1/2/3.
+      verts = sc_verticals(String.split(path))
+
+      for {id, row} <- [{"B", 1}, {"C", 2}, {"D", 3}] do
+        {l, r} = sc_bar_box(html, id, cw)
+        {band_top, band_bottom} = {row * 40, (row + 1) * 40}
+
+        refute Enum.any?(verts, fn {x, y1, y2} ->
+                 x > l and x < r and y1 < band_bottom and y2 > band_top
+               end),
+               "A->E verticals #{inspect(verts)} should not pierce #{id} [#{l}..#{r}] in rows [#{band_top}..#{band_bottom}]"
+      end
+    end
+  end
+
   describe "connector tight-gap detour" do
     test "forward FS with tight gap routes via 5-segment detour for full-length stems" do
       # Milestone source + 3 targets starting the SAME day (0-gap FS — the

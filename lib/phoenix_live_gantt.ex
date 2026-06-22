@@ -68,6 +68,18 @@ defmodule PhoenixLiveGantt do
   # Hard minimum stem visibility. The bus-preferred elbow is ≥ this, but
   # wide-ish gaps (but not wide enough for full elbow) clamp down here.
   @min_exit_stem_px 6
+  # Horizontal clearance a connector's vertical trunk keeps from any bar edge:
+  # the comfortable target, and the hard floor it settles for when the gap is
+  # tight. A trunk drawn flush along a bar edge reads as part of the bar (hard
+  # to follow), so we aim for the target, tighten toward the floor only when
+  # forced, and — if not even the floor is reachable — let the trunk pass
+  # THROUGH the bar (a visible crossing beats an edge-hug). `maybe_shift_trunk`
+  # (which places the trunk) and `forward_path_unfeasible?` (which decides
+  # forward-vs-detour) BOTH test reachability against the floor, so the decision
+  # and the placement agree — otherwise forward can be greenlit on a trunk the
+  # placer can only pierce.
+  @trunk_clearance_px 6
+  @trunk_min_clearance_px 1
   # The arrow marker is 6px wide with refX=6, so its visible triangle
   # extends ~3.6px west and ~2.4px east of the path endpoint. The approach
   # needs room for BOTH the arrowhead's east extent AND a visible horizontal
@@ -2992,22 +3004,25 @@ defmodule PhoenixLiveGantt do
         bars_in_span == [] ->
           false
 
-        preferred_mid >= min_x and preferred_mid <= max_x and
-            not trunk_collides?(preferred_mid, bars_in_span) ->
+        # Preferred trunk already keeps real clearance — forward is fine.
+        trunk_clearance(preferred_mid, bars_in_span) >= @trunk_min_clearance_px ->
           false
 
-        true ->
-          # If any candidate (bar edge ± 3) within valid_range gives a
-          # clean trunk, forward is feasible (maybe_shift_trunk will
-          # take it). Otherwise force detour.
-          clean_exists? =
-            preferred_mid
-            |> candidate_xs(bars_in_span)
-            |> Enum.any?(fn x ->
-              x >= min_x and x <= max_x and not trunk_collides?(x, bars_in_span)
-            end)
+        # A trunk with ≥floor clearance is reachable in range, so
+        # `maybe_shift_trunk` will move the trunk there — forward still works.
+        # This MUST mirror the placer's own reachability test. The old check
+        # used `not trunk_collides?`, which counts a bar-to-bar JUNCTION (an x
+        # exactly between two touching bars) as clean despite ZERO real
+        # clearance — so a tight staircase of consecutive bars looked feasible
+        # while the placer could only pierce. Reusing `clear_trunk_x` (the same
+        # helper the placer uses) makes the decision and the placement agree.
+        clear_trunk_x(preferred_mid, bars_in_span, @trunk_min_clearance_px, min_x, max_x) ->
+          false
 
-          not clean_exists?
+        # No clearance reachable and the preferred would pierce → route around
+        # via the detour (which travels the inter-row borders) instead.
+        true ->
+          true
       end
     end
   end
@@ -3850,16 +3865,9 @@ defmodule PhoenixLiveGantt do
 
   # Shift `preferred` to the nearest bar-free x in `[min_x, max_x]`.
   # If the preferred is already clean, or collision avoidance is off,
-  # or no candidate is clean, return preferred unchanged.
-  # Preferred horizontal clearance a vertical trunk keeps from any bar edge, and
-  # the hard floor it settles for when the gap is too tight for more. A trunk
-  # drawn flush along a bar's edge is hard to follow — it reads as part of the
-  # bar — so we aim for comfortable clearance, tighten toward 1px only when
-  # forced, and if not even 1px is reachable leave the trunk to pass THROUGH the
-  # bar (a visible crossing is clearer than an edge-hug).
-  @trunk_clearance_px 6
-  @trunk_min_clearance_px 1
-
+  # or no candidate is clean, return preferred unchanged. The clearance
+  # target/floor (@trunk_clearance_px / @trunk_min_clearance_px) live up top
+  # with the other routing constants.
   defp maybe_shift_trunk(preferred, _y1, _y2, _range, _exclude, %{avoid_collisions: false}),
     do: preferred
 
