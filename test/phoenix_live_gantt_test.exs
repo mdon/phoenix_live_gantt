@@ -148,6 +148,20 @@ defmodule PhoenixLiveGanttTest do
       assert html =~ "Today"
     end
 
+    test "the Today badge sits in the date-header row, not the body line" do
+      # The badge lives in the header so it can't collide with bars / the
+      # too-small-task markers in the body. The body keeps just the vertical line.
+      today = ~D[2026-04-15]
+      assigns = %{events: sample_events(), range: sample_range(), today: today}
+
+      html = render(~H"<.gantt events={@events} date_range={@range} today={@today} />")
+
+      # The "Today" label renders as the header badge...
+      assert html =~ ~r/lg-today-badge[^>]*>\s*Today\s*</
+      # ...and the body marker line is now childless (no badge nested inside it).
+      assert html =~ ~r/class="lg-today [^"]*"[^>]*>\s*<\/div>/
+    end
+
     test "hides today marker when outside range" do
       today = ~D[2027-01-01]
       assigns = %{events: sample_events(), range: sample_range(), today: today}
@@ -1904,6 +1918,81 @@ defmodule PhoenixLiveGanttTest do
                ~s(class="lg-arrowhead absolute lg-arrow text-primary dark:text-secondary font-bold")
 
       refute html =~ ~s(lg-arrowhead absolute lg-arrow text-primary/30)
+    end
+  end
+
+  describe "connector trunk clearance (followable routing)" do
+    # A(row0) -> C(row2) forward dependency that skips over an intervening task
+    # B(row1) sitting between A's finish and C's start. The trunk used to land
+    # ~3px off B's edge, running flush alongside it (hard to follow); it must now
+    # keep a comfortable gap.
+    defp skip_over_events do
+      [
+        %PhoenixLiveGantt.Task{
+          id: "A",
+          start: ~D[2026-01-01],
+          end: ~D[2026-01-05],
+          extra: %{order: 0}
+        },
+        %PhoenixLiveGantt.Task{
+          id: "B",
+          start: ~D[2026-01-06],
+          end: ~D[2026-01-07],
+          extra: %{order: 1}
+        },
+        %PhoenixLiveGantt.Task{
+          id: "C",
+          start: ~D[2026-01-08],
+          end: ~D[2026-01-12],
+          extra: %{order: 2}
+        }
+      ]
+    end
+
+    defp trunk_mid(html) do
+      # Forward path "M x1 y1 H mid V y2 H stop" on the A->C connector.
+      [_, mid] =
+        Regex.run(
+          ~r/\bd="M \d+ \d+ H (\d+) V[^"]*"[^>]*data-from-id="A"[^>]*data-to-id="C"/,
+          html
+        )
+
+      String.to_integer(mid)
+    end
+
+    defp b_edges(html) do
+      cw =
+        case Regex.run(~r/min-width: (\d+)px/, html) do
+          [_, c] -> String.to_integer(c)
+        end
+
+      [_, l, w] = Regex.run(~r/id="cl-bar-B"[^>]*style="left: ([\d.]+)%; width: ([\d.]+)%/, html)
+      left = round(String.to_float(l) / 100 * cw)
+      {left, left + round(String.to_float(w) / 100 * cw)}
+    end
+
+    test "the trunk keeps clear of an intervening bar's edge (no flush hug)" do
+      assigns = %{
+        events: skip_over_events(),
+        range: Date.range(~D[2026-01-01], ~D[2026-01-12]),
+        conns: [%{from: "A", to: "C"}]
+      }
+
+      html =
+        render(
+          ~H[<.gantt id="cl" events={@events} connectors={@conns} date_range={@range} zoom={:day} />]
+        )
+
+      mid = trunk_mid(html)
+      {b_left, b_right} = b_edges(html)
+
+      # The trunk's vertical must clear B by at least the comfortable margin on
+      # whichever side it routes — never run flush along (within a few px of) an
+      # edge, and never inside the bar.
+      clearance = if mid <= b_left, do: b_left - mid, else: mid - b_right
+
+      assert (mid <= b_left or mid >= b_right) and clearance >= 6,
+             "trunk #{mid} should clear B [#{b_left}..#{b_right}] by >= 6px, got #{clearance}"
     end
   end
 

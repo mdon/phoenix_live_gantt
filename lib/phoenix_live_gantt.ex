@@ -372,7 +372,19 @@ defmodule PhoenixLiveGantt do
   # gets a visually distinct color instead of two translucent
   # layers stacking up to an unexpected hue. A single string is
   # accepted for backwards-compat and used at every depth.
-  attr :subproject_frame_color, :any, default: ["#FEF3C7", "#DBEAFE", "#E0E7FF", "#FCE7F3"]
+  #
+  # The defaults are THEME-AWARE: low-opacity daisyUI semantic colors via
+  # `color-mix` + the `--color-*` CSS vars, so the band is a subtle tint that
+  # adapts to light/dark themes (an opaque light hex would be harsh on a dark
+  # canvas and wash out the theme-colored label text). Pass any CSS color value
+  # (hex, rgb, or your own `color-mix(...)`) to override.
+  attr :subproject_frame_color, :any,
+    default: [
+      "color-mix(in oklab, var(--color-warning) 15%, transparent)",
+      "color-mix(in oklab, var(--color-info) 15%, transparent)",
+      "color-mix(in oklab, var(--color-success) 15%, transparent)",
+      "color-mix(in oklab, var(--color-secondary) 15%, transparent)"
+    ]
 
   attr :bar_background_class, :string, default: "absolute inset-0 rounded"
   attr :bar_default_color_class, :string, default: "bg-primary"
@@ -487,13 +499,18 @@ defmodule PhoenixLiveGantt do
 
   attr :badge_default_color_class, :string, default: "bg-error"
 
-  # Today marker (vertical line + badge on top)
+  # Today marker — a vertical line in the body, and a "Today" badge that sits up
+  # in the date-header row (not the body) so it can't collide with bars or the
+  # too-small-task markers.
   attr :today_marker_line_class, :string,
     default: "absolute top-0 w-0.5 bg-error z-30 pointer-events-none"
 
+  # Appearance only — vertical position is set inline in the template
+  # (`bottom: -2px`) so the badge's red body covers the header's `border-b-2` and
+  # meets the marker line seamlessly, independent of which CSS the consumer ships.
   attr :today_marker_badge_class, :string,
     default:
-      "absolute top-0 -translate-x-1/2 bg-error text-error-content text-[0.55rem] px-1 rounded-b font-bold whitespace-nowrap"
+      "absolute -translate-x-1/2 z-10 bg-error text-error-content text-[0.6rem] leading-none px-1.5 py-0.5 rounded font-bold whitespace-nowrap pointer-events-none"
 
   attr :translations, :map,
     default: %{},
@@ -1028,7 +1045,7 @@ defmodule PhoenixLiveGantt do
                  sticky header) so they span the full content width and stay put
                  under columns scrolled into view. --%>
             <div
-              class="flex flex-1 bg-base-100 border-b-2 border-base-content/15"
+              class="flex flex-1 bg-base-100 border-b-2 border-base-content/15 relative"
               style={"min-width: #{@content_width}px"}
             >
               <div
@@ -1045,6 +1062,18 @@ defmodule PhoenixLiveGantt do
                 style={"width: #{pct(col.width_px, @content_width)}%"}
               >
                 {col.label}
+              </div>
+
+              <%!-- "Today" badge lives HERE, in the date-header row, anchored to
+                   the marker's x — so it can't collide with bars or the
+                   too-small-task triangles down in the body. The vertical line
+                   itself continues below in the body. --%>
+              <div
+                :if={@show_today && today_in_range?(@today, @view)}
+                class={["lg-today-badge", @today_marker_badge_class]}
+                style={"left: #{pct(today_left_px(@today, @view, @day_px), @content_width)}%; bottom: -2px"}
+              >
+                {I18n.label(:today, @translations)}
               </div>
             </div>
           </div>
@@ -1222,15 +1251,13 @@ defmodule PhoenixLiveGantt do
                 </div>
               </div>
 
-              <%!-- Today marker line --%>
+              <%!-- Today marker line (the "Today" badge sits up in the date-header
+                   row — see the header above). --%>
               <div
                 :if={@show_today && today_in_range?(@today, @view)}
                 class={["lg-today", @today_marker_line_class]}
                 style={"left: #{pct(today_left_px(@today, @view, @day_px), @content_width)}%; height: #{@content_height}px"}
               >
-                <div class={@today_marker_badge_class}>
-                  {I18n.label(:today, @translations)}
-                </div>
               </div>
 
               <%!-- Sub-project frames: a translucent rectangle that
@@ -3824,30 +3851,68 @@ defmodule PhoenixLiveGantt do
   # Shift `preferred` to the nearest bar-free x in `[min_x, max_x]`.
   # If the preferred is already clean, or collision avoidance is off,
   # or no candidate is clean, return preferred unchanged.
+  # Preferred horizontal clearance a vertical trunk keeps from any bar edge, and
+  # the hard floor it settles for when the gap is too tight for more. A trunk
+  # drawn flush along a bar's edge is hard to follow — it reads as part of the
+  # bar — so we aim for comfortable clearance, tighten toward 1px only when
+  # forced, and if not even 1px is reachable leave the trunk to pass THROUGH the
+  # bar (a visible crossing is clearer than an edge-hug).
+  @trunk_clearance_px 6
+  @trunk_min_clearance_px 1
+
   defp maybe_shift_trunk(preferred, _y1, _y2, _range, _exclude, %{avoid_collisions: false}),
     do: preferred
 
   defp maybe_shift_trunk(preferred, _y1, _y2, _range, _exclude, %{bars: []}), do: preferred
 
   defp maybe_shift_trunk(preferred, y1, y2, {min_x, max_x}, exclude_ids, ctx) do
-    bars_in_span = bars_crossing_span(ctx.bars, y1, y2, exclude_ids)
+    bars = bars_crossing_span(ctx.bars, y1, y2, exclude_ids)
 
-    # Hard chart boundary — never push the trunk past the right edge
-    # of the SVG canvas (where it would be invisible). If no clean
-    # column exists within the visible area, fall back to `preferred`
-    # and accept the on-screen overlap — a faint collision the user
-    # can see beats a trunk drawn off-screen.
+    # Hard chart boundary — never push the trunk past the right edge of the SVG
+    # canvas (where it would be invisible).
     max_x = min(max_x, Map.get(ctx, :content_width, max_x))
 
-    if trunk_collides?(preferred, bars_in_span) do
-      preferred
-      |> candidate_xs(bars_in_span)
-      |> Enum.filter(fn x -> x >= min_x and x <= max_x end)
-      |> Enum.find(fn x -> not trunk_collides?(x, bars_in_span) end)
-      |> Kernel.||(preferred)
-    else
-      preferred
+    cond do
+      bars == [] ->
+        preferred
+
+      # Already comfortably clear — leave it where the router wanted it.
+      trunk_clearance(preferred, bars) >= @trunk_clearance_px ->
+        preferred
+
+      # Aim for comfortable clearance; settle for a 1px sliver only if the gap is
+      # too tight; otherwise leave `preferred` to pass through the bar.
+      true ->
+        clear_trunk_x(preferred, bars, @trunk_clearance_px, min_x, max_x) ||
+          clear_trunk_x(preferred, bars, @trunk_min_clearance_px, min_x, max_x) ||
+          preferred
     end
+  end
+
+  # Smallest horizontal gap between `x` and any bar edge; negative when `x` is
+  # inside a bar (the trunk would pierce it). `bars` is non-empty.
+  defp trunk_clearance(x, bars) do
+    bars
+    |> Enum.map(fn b ->
+      cond do
+        x <= b.x_left -> b.x_left - x
+        x >= b.x_right -> x - b.x_right
+        true -> -min(x - b.x_left, b.x_right - x)
+      end
+    end)
+    |> Enum.min()
+  end
+
+  # Nearest x to `preferred` within `[min_x, max_x]` keeping at least `clearance`
+  # from every bar; nil if none. Candidates are each bar edge pushed out by
+  # `clearance`, plus the range bounds.
+  defp clear_trunk_x(preferred, bars, clearance, min_x, max_x) do
+    (Enum.flat_map(bars, fn b -> [b.x_left - clearance, b.x_right + clearance] end) ++
+       [min_x, max_x])
+    |> Enum.filter(fn x ->
+      x >= min_x and x <= max_x and trunk_clearance(x, bars) >= clearance
+    end)
+    |> Enum.min_by(fn x -> abs(x - preferred) end, fn -> nil end)
   end
 
   # Filter obstacles down to those whose y-range overlaps the trunk's
@@ -4653,7 +4718,7 @@ defmodule PhoenixLiveGantt do
   end
 
   defp frame_color_for(color, _parent_depth) when is_binary(color), do: color
-  defp frame_color_for(_, _), do: "#FEF3C7"
+  defp frame_color_for(_, _), do: "color-mix(in oklab, var(--color-base-content) 8%, transparent)"
 
   # Events that should be visible given the current expanded set: any
   # event whose parents are ALL expanded (or that has no parents).
@@ -4716,8 +4781,15 @@ defmodule PhoenixLiveGantt do
           |> Enum.reject(&is_nil/1)
           |> rolled_up_range()
           |> case do
-            nil -> ev
-            {min_start, max_end} -> %PhoenixLiveGantt.Task{ev | start: min_start, end: max_end}
+            nil ->
+              ev
+
+            # Map-update (not `%Task{ev | ...}`) preserves the struct while
+            # keeping dialyzer happy: `ev` is a generic `Enum.map` binding, so
+            # its success typing isn't narrowed to `Task` and a *named* struct
+            # update trips a (harmless) "expected a struct" success-typing note.
+            {min_start, max_end} ->
+              %{ev | start: min_start, end: max_end}
           end
       end
     end)
