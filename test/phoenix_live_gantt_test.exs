@@ -1110,7 +1110,9 @@ defmodule PhoenixLiveGanttTest do
         },
         %PhoenixLiveGantt.Task{id: "b1", start: ~D[2026-02-01], end: ~D[2026-02-05], title: "B1"},
         %PhoenixLiveGantt.Task{id: "b2", start: ~D[2026-02-20], end: ~D[2026-02-25], title: "B2"},
-        %PhoenixLiveGantt.Task{id: "a1", start: ~D[2026-05-01], end: ~D[2026-05-05], title: "A1"}
+        # June, comfortably past the week-snapped axis end (the Apr-range snaps
+        # out to Mar 30 … May 31 at :week zoom), so it stays a "later" event.
+        %PhoenixLiveGantt.Task{id: "a1", start: ~D[2026-06-10], end: ~D[2026-06-15], title: "A1"}
       ]
 
       range = Date.range(~D[2026-04-01], ~D[2026-04-30])
@@ -1352,8 +1354,10 @@ defmodule PhoenixLiveGanttTest do
 
       html = render(~H"<.gantt events={[]} date_range={@range} zoom={:week} />")
 
-      # Should show week numbers
-      assert html =~ "W"
+      # Week columns are labeled with their date span (Apr 6 (Mon) … May 3 (Sun)
+      # is already week-aligned, so 4 whole weeks).
+      assert html =~ "Apr 6 – 12"
+      assert html =~ "Apr 27 – May 3"
     end
 
     test "renders progress at 100% with success color" do
@@ -1393,6 +1397,100 @@ defmodule PhoenixLiveGanttTest do
       html = render(~H"<.gantt events={@events} date_range={@range} show_progress={false} />")
 
       refute html =~ "width: 50%"
+    end
+  end
+
+  describe "week/month axis snapping (boundary alignment)" do
+    # Non-spacer column header labels, in order.
+    defp header_labels(html) do
+      Regex.scan(~r/lg-col-header[^>]*>\s*([^<]*?)\s*<\/div>/, html)
+      |> Enum.map(fn [_, label] -> label end)
+      |> Enum.reject(&(&1 == ""))
+    end
+
+    test "a short, week-unaligned range snaps out to full Mon–Sun week columns" do
+      # The real-world bug: a ~6-day project (Sat May 2 → Thu May 7) at :week zoom
+      # used to chunk into two ragged partial columns ("May 2" = Sat–Sun stub,
+      # "May 4" = Mon–Thu stub) with mid-week DATE labels. The axis must snap out
+      # to whole weeks (Mon Apr 27 … Sun May 10) so every column is a full week
+      # labeled with its date span.
+      range = Date.range(~D[2026-05-02], ~D[2026-05-07])
+      assigns = %{events: [], range: range}
+
+      html = render(~H"<.gantt events={[]} date_range={@range} zoom={:week} />")
+
+      labels = header_labels(html)
+
+      # Exactly two full weeks, each labeled with its boundary-aligned span — the
+      # first snaps back to Mon Apr 27 (no Sat-May-2 stub), proving the fix.
+      assert labels == ["Apr 27 – May 3", "May 4 – 10"],
+             "expected two whole-week date-range columns, got #{inspect(labels)}"
+
+      # Both columns are full 7-day weeks → identical widths.
+      widths = Regex.scan(~r/lg-col-header[^>]*style="width: ([0-9.]+)%"/, html)
+
+      assert match?([[_, w], [_, w]], widths),
+             "week columns must be equal width: #{inspect(widths)}"
+    end
+
+    test "an ISO week straddling New Year is ONE column, not two year-split stubs" do
+      # ISO week 2026-W53 runs Mon 2026-12-28 → Sun 2027-01-03. Chunking on the
+      # calendar year split it into {2026, 53} (Dec 28–31) and {2027, 53}
+      # (Jan 1–3) — two mislabeled date stubs. Keying on the ISO week tuple keeps
+      # it a single column spanning the whole week.
+      range = Date.range(~D[2026-12-28], ~D[2027-01-03])
+      assigns = %{events: [], range: range}
+
+      html = render(~H"<.gantt events={[]} date_range={@range} zoom={:week} />")
+
+      assert header_labels(html) == ["Dec 28 – Jan 3"]
+      # Not split into a "… Jan 1 …" stub starting on New Year's Day.
+      refute html =~ "Jan 1 –"
+    end
+
+    test "a mid-month range snaps out to whole-month columns at :month zoom" do
+      # Apr 15 → May 10 must render full "Apr 2026" + "May 2026" columns
+      # (snapped to Apr 1 … May 31), not partial first/last month stubs.
+      range = Date.range(~D[2026-04-15], ~D[2026-05-10])
+      assigns = %{events: [], range: range}
+
+      html = render(~H"<.gantt events={[]} date_range={@range} zoom={:month} />")
+
+      assert header_labels(html) == ["Apr 2026", "May 2026"]
+
+      # April (30 days) is narrower than May (31 days): full months, not equal stubs.
+      [[_, apr], [_, may]] = Regex.scan(~r/lg-col-header[^>]*style="width: ([0-9.]+)%"/, html)
+      assert String.to_float(apr) < String.to_float(may)
+    end
+
+    test ":day zoom is NOT snapped — a 6-day range stays 6 day columns" do
+      # Snapping only applies at :week / :month granularity; finer zooms are
+      # already one-day-per-column, so the range passes through untouched.
+      range = Date.range(~D[2026-04-01], ~D[2026-04-06])
+      assigns = %{events: [], range: range}
+
+      html = render(~H"<.gantt events={[]} date_range={@range} zoom={:day} />")
+
+      assert header_labels(html) == ["1", "2", "3", "4", "5", "6"]
+    end
+
+    test "bars stay aligned to the snapped axis" do
+      # A task on a week-unaligned range must still sit at its true date once the
+      # axis snaps: range Apr 1 (Wed) → Apr 30 (Thu) snaps to Mon Mar 30 … Sun
+      # May 3 (35 days, content_width 35*24+32 = 872). The task at Apr 1 is offset
+      # 2 from Mar 30: left (16 + 2*24)/872 = 7.3394%, width 9*24/872 = 24.7706%.
+      events = [
+        %PhoenixLiveGantt.Task{id: "x", start: ~D[2026-04-01], end: ~D[2026-04-10], title: "X"}
+      ]
+
+      assigns = %{events: events, range: Date.range(~D[2026-04-01], ~D[2026-04-30])}
+
+      html =
+        render(~H"""
+        <.gantt id="al" events={@events} date_range={@range} zoom={:week} />
+        """)
+
+      assert html =~ ~r/id="al-bar-x"[^>]*style="left: 7.3394%; width: 24.7706%/
     end
   end
 
@@ -1746,6 +1844,66 @@ defmodule PhoenixLiveGanttTest do
       # Marked invalid because schedule violates SS constraint
       assert html =~ ~s(data-invalid="true")
       assert html =~ "text-error"
+    end
+  end
+
+  describe "connector arrowhead opacity (solid head)" do
+    test "the default subtle line keeps its alpha but the arrowhead is solid" do
+      connectors = [%{from: "t1", to: "t2"}]
+      assigns = %{events: two_events(), range: sample_range(), connectors: connectors}
+
+      html =
+        render(~H"<.gantt events={@events} date_range={@range} connectors={@connectors} />")
+
+      # The shaft keeps the default 50% alpha (a deliberately subtle line)...
+      assert html =~ ~s(lg-connector stroke-current text-base-content/50)
+      # ...but the arrowhead drops the `/50` so it renders SOLID — the line can't
+      # show through a half-transparent head.
+      assert html =~ ~s(class="lg-arrowhead absolute lg-arrow text-base-content")
+      refute html =~ ~s(lg-arrowhead absolute lg-arrow text-base-content/50)
+    end
+
+    test "a custom alpha color still yields a solid (opaque) arrowhead" do
+      connectors = [%{from: "t1", to: "t2"}]
+      assigns = %{events: two_events(), range: sample_range(), connectors: connectors}
+
+      html =
+        render(~H[<.gantt
+  events={@events}
+  date_range={@range}
+  connectors={@connectors}
+  connector_color_class="text-primary/30"
+/>])
+
+      assert html =~ ~s(lg-connector stroke-current text-primary/30)
+      assert html =~ ~s(class="lg-arrowhead absolute lg-arrow text-primary")
+      refute html =~ ~s(lg-arrowhead absolute lg-arrow text-primary/30)
+    end
+
+    test "a multi-token / variant color de-alphas every token of the head" do
+      # A compound color (base + dark variant + a non-color utility) must yield a
+      # SOLID head on every token — the alpha is stripped per-token, not just from
+      # the end of the whole string.
+      connectors = [%{from: "t1", to: "t2"}]
+      assigns = %{events: two_events(), range: sample_range(), connectors: connectors}
+
+      html =
+        render(~H[<.gantt
+  events={@events}
+  date_range={@range}
+  connectors={@connectors}
+  connector_color_class="text-primary/30 dark:text-secondary/40 font-bold"
+/>])
+
+      # The shaft keeps every alpha (subtle line, light + dark)...
+      assert html =~
+               ~s(lg-connector stroke-current text-primary/30 dark:text-secondary/40 font-bold)
+
+      # ...the head drops both `/30` and `/40` but keeps `font-bold`.
+      assert html =~
+               ~s(class="lg-arrowhead absolute lg-arrow text-primary dark:text-secondary font-bold")
+
+      refute html =~ ~s(lg-arrowhead absolute lg-arrow text-primary/30)
     end
   end
 
@@ -2487,11 +2645,13 @@ defmodule PhoenixLiveGanttTest do
         render(~H"<.gantt events={@events} date_range={@range} connectors={@connectors} />")
 
       # In 5-seg detour `M x1 y1 H stem_out`, stem_out = x1 + exit_stem. Every x
-      # is shifted by @axis_pad_px (16) for the connector margin: x1 = 16 + 4*24 =
-      # 112, stem_out = 137. arrow_stop = 16 + 19*24 = 472 (gap 0: the tip lands on
-      # the target edge, the fixed-px arrowhead gives the separation). stem_in =
-      # arrow_stop - entry_stem = 467.
-      assert Regex.match?(~r/d="M 112 \d+ H 137 V \d+ H 467/, html)
+      # is shifted by @axis_pad_px (16) for the connector margin, and the :week
+      # axis snaps to whole weeks so `sample_range`'s Apr 1 (Wed) start becomes
+      # Mon Mar 30 — offsets count from there. s ends Apr 5 = offset 6: x1 =
+      # 16 + 6*24 = 160, stem_out = 185. arrow_stop = t's start Apr 20 = offset 21:
+      # 16 + 21*24 = 520 (gap 0: the tip lands on the target edge, the fixed-px
+      # arrowhead gives the separation). stem_in = arrow_stop - entry_stem = 515.
+      assert Regex.match?(~r/d="M 160 \d+ H 185 V \d+ H 515/, html)
     end
 
     test "avoid_collisions: false disables per-connector collision shifts" do
@@ -3747,12 +3907,13 @@ defmodule PhoenixLiveGanttTest do
       html =
         render(~H[<.gantt id="lg" events={@events} date_range={@range} />])
 
-      # Children span Apr 1 → Apr 10 = 216px (9d × 24). Content width is the
-      # 60-day sample_range × 24 + 2 × @axis_pad_px (16) = 1472px, and the bar x
-      # is shifted by the pad: left (16 + 0)/1472 = 1.087%, width 216/1472 =
-      # 14.6739%.
+      # Children span Apr 1 → Apr 10 = 216px (9d × 24). The :week axis snaps
+      # `sample_range` (Apr 1 Wed … May 30 Sat) out to whole weeks Mar 30 … May 31
+      # = 63 days, so content width = 63 × 24 + 2 × @axis_pad_px (16) = 1544px. The
+      # parent starts at Apr 1 = offset 2 from Mar 30, shifted by the pad: left
+      # (16 + 2*24)/1544 = 4.1451%, width 216/1544 = 13.9896%.
       assert html =~
-               ~r/id="lg-bar-p"[^>]*style="left: 1.087%; width: 14.6739%/
+               ~r/id="lg-bar-p"[^>]*style="left: 4.1451%; width: 13.9896%/
     end
 
     test "sub-day children roll up to a parent BAR, not a midnight milestone" do
@@ -4107,10 +4268,13 @@ defmodule PhoenixLiveGanttTest do
       html =
         render(~H[<.gantt events={@events} date_range={@range} zoom={:month} min_bar_px={4} />])
 
-      # content_width = round(60 * 8) + 2 * 16 = 512px. 4px floor = 0.78125%.
-      expected_floor_pct = 4 / 512 * 100
+      # The :month axis snaps `sample_range` (Apr 1 … May 30) out to whole months
+      # Apr 1 … May 31 = 61 days, so content_width = round(61 * 8) + 2 * 16 = 520px.
+      # 4px floor = 0.7692%. Compare against the displayed (4-dp-rounded) floor so
+      # the assertion isn't tripped by the renderer rounding the last digit down.
+      expected_floor_pct = Float.round(4 / 520 * 100, 4)
       assert bar_width_pct(html) >= expected_floor_pct
-      assert html =~ "width: 0.7813%"
+      assert html =~ "width: 0.7692%"
     end
 
     test "default min_bar_px (0) leaves a sub-pixel bar as an honest hairline" do

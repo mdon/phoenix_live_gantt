@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.0] — 2026-06-22
+
+Week/month axis legibility + a solid arrowhead.
+
+### Changed
+
+- **Week/month axis snaps to whole columns.** At `:week`/`:month` granularity the
+  date axis now rounds OUTWARD to whole-week (Mon–Sun) / whole-month boundaries,
+  so every column is a complete, boundary-aligned week/month instead of a ragged
+  partial stub (e.g. a 2-day "Sat–Sun" sliver). Bars keep their true dates within
+  the widened axis. Pass a tight, task-fitted range and the chart rounds it out on
+  its own. Finer granularities are unaffected.
+- **Week columns are labeled with their date span** ("Apr 27 – May 3", or
+  "May 4 – 10" within a month) instead of the ISO ordinal ("W18") — a range reads
+  without mapping a week number back to dates.
+
+### Fixed
+
+- **A week straddling New Year is one column, not two.** Week chunking now keys on
+  the full ISO week (`:calendar.iso_week_number/1`) rather than `{calendar_year,
+  week}`, so ISO week 53 (Mon 2026-12-28 → Sun 2027-01-03) no longer splits into
+  two mislabeled stubs across the year boundary.
+- **Connector arrowheads render solid.** The head no longer inherits the line's
+  alpha (the default `text-base-content/50`), so the shaft can't show through a
+  half-transparent triangle. The line stays subtle; only the head is made opaque,
+  and it works for any custom connector color (e.g. `text-primary/30` → a subtle
+  line with a solid `text-primary` head).
+
 ## [0.1.1] — 2026-06-13
 
 Docs + accessibility. No API changes.

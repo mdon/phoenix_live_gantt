@@ -141,7 +141,11 @@ defmodule PhoenixLiveGantt do
   phoenix_live_gantt.js`) must be registered for the popover / scroll-to-today.
   """
   attr :events, :list, default: []
-  attr :date_range, Date.Range, required: true
+
+  attr :date_range, Date.Range,
+    required: true,
+    doc:
+      "The visible date axis. At `:week` / `:month` column granularity the axis is snapped OUTWARD to whole-week (Mon–Sun) / whole-month boundaries so columns are complete and boundary-aligned — pass a tight, task-fitted range and the chart rounds it out to full weeks/months on its own (bars keep their true dates within the widened axis). Finer granularities use the range as-is. NOTE: the granularity is resolved from the pixel density, so a `day_width_px` override (not the named `zoom`) decides whether snapping applies — a density in the week/month band snaps. Ignored in favor of `window_start`/`window_end` when a positive sub-day window is supplied."
 
   attr :window_start, NaiveDateTime,
     default: nil,
@@ -228,8 +232,11 @@ defmodule PhoenixLiveGantt do
   #
   # Per-connector fields on the connector map override these when set.
   # Color classes use Tailwind's `text-*` tokens (e.g. `text-success`);
-  # the SVG paths use `stroke-current` and markers use `fill="currentColor"`
-  # so a single color class drives both the line and its arrowhead.
+  # the SVG line uses `stroke-current` and the arrowhead `fill-current`, so a
+  # single color class drives both. The line keeps the class's alpha (so the
+  # default below renders a subtle 50% line), but the arrowHEAD is drawn SOLID —
+  # the alpha modifier is stripped (`opaque_class/1`) so the line never shows
+  # through a half-transparent head.
 
   attr :connector_color_class, :string, default: "text-base-content/50"
   attr :connector_stroke_width, :float, default: 1.5
@@ -564,8 +571,6 @@ defmodule PhoenixLiveGantt do
     validate_event_ids!(assigns.events)
 
     today = assigns.today || Date.utc_today()
-    range = assigns.date_range
-    total_days = Date.diff(range.last, range.first) + 1
 
     # `day_width_px` overrides the per-zoom default — e.g. a consumer doing
     # fit-to-width passes a px-per-day computed from the measured viewport.
@@ -573,24 +578,11 @@ defmodule PhoenixLiveGantt do
     row_px = parse_row_height(assigns.row_height)
     min_bar_px = assigns.min_bar_px
 
-    # The POSITIONING window. Normally the whole-day `date_range` (origin =
-    # `range.first` midnight, span = `total_days`). A consumer can override with
-    # a sub-day `window_start`/`window_end` (NaiveDateTime) so the axis starts
-    # partway through a day — e.g. ~1 column before the first task at `:hour`/
-    # `:min15`/`:min5` zoom, instead of a wall of empty pre-task columns from
-    # midnight. `view = {origin, span_days}` threads both through positioning.
-    {origin, span_days} =
-      case {assigns.window_start, assigns.window_end} do
-        {%NaiveDateTime{} = ws, %NaiveDateTime{} = we} ->
-          span = NaiveDateTime.diff(we, ws, :second) / 86_400
-          # A non-positive window is meaningless — ignore the override and fall
-          # back to the whole-day range rather than producing a 0/negative axis
-          # (which flags every bar out-of-range and blanks/crashes the chart).
-          if span > 0, do: {ws, span}, else: {range.first, total_days * 1.0}
-
-        _ ->
-          {range.first, total_days * 1.0}
-      end
+    # Resolve the positioning axis: a sub-day `window_start`/`window_end` window
+    # when supplied, else the (week/month-snapped) whole-day `date_range`. See
+    # `resolve_axis/2`. `view = {origin, span_days}` threads it through positioning.
+    {range, origin, span_days} = resolve_axis(assigns, day_px)
+    total_days = Date.diff(range.last, range.first) + 1
 
     view = {origin, span_days}
     content_width = round(span_days * day_px) + 2 * @axis_pad_px
@@ -1589,7 +1581,7 @@ defmodule PhoenixLiveGantt do
               >
                 <div
                   :for={p <- @connector_paths}
-                  class={["lg-arrowhead absolute", p.arrow.variant_class, p.color_class]}
+                  class={["lg-arrowhead absolute", p.arrow.variant_class, p.head_color_class]}
                   style={"left: #{pct(p.arrow.tip_x, @content_width)}%; top: #{p.arrow.tip_y}px"}
                   data-from-id={p.from_id}
                   data-to-id={p.to_id}
@@ -1781,8 +1773,13 @@ defmodule PhoenixLiveGantt do
     today_date = to_date(today)
     dates = Enum.to_list(range)
 
+    # Group by the full ISO week tuple `{iso_year, week}`, NOT `{calendar_year,
+    # week}` — `:calendar.iso_week_number/1` returns the ISO year, which differs
+    # from the calendar year for a week straddling New Year (Mon 2026-12-28 … Sun
+    # 2027-01-03 is ISO week 2026-W53). Keying on the calendar year would split
+    # that single week into two mislabeled stubs.
     dates
-    |> Enum.chunk_by(fn d -> {d.year, elem(:calendar.iso_week_number(Date.to_erl(d)), 1)} end)
+    |> Enum.chunk_by(fn d -> :calendar.iso_week_number(Date.to_erl(d)) end)
     |> Enum.map(fn chunk ->
       first = hd(chunk)
       days_in_chunk = length(chunk)
@@ -1955,6 +1952,56 @@ defmodule PhoenixLiveGantt do
   defp day_width_px(:month), do: 8
   defp day_width_px(_), do: 24
 
+  # Resolve the positioning axis as `{range, origin, span_days}`.
+  #
+  # Normally the whole-day `date_range` (origin = `range.first` midnight, span =
+  # total days), snapped OUTWARD to whole weeks/months at :week/:month
+  # granularity (see `snap_range_for_columns/2`). A consumer can override with a
+  # sub-day `window_start`/`window_end` (NaiveDateTime) so the axis starts partway
+  # through a day — e.g. ~1 column before the first task at `:hour`/`:min15`/
+  # `:min5` zoom, instead of a wall of empty pre-task columns from midnight. A
+  # non-positive window is meaningless — it's ignored, falling back to the
+  # whole-day range rather than producing a 0/negative axis (which would flag
+  # every bar out-of-range and blank/crash the chart). The sub-day window is
+  # positioned intra-day via `window_columns` and is never snapped.
+  defp resolve_axis(assigns, day_px) do
+    with {%NaiveDateTime{} = ws, %NaiveDateTime{} = we} <-
+           {assigns.window_start, assigns.window_end},
+         span when span > 0 <- NaiveDateTime.diff(we, ws, :second) / 86_400 do
+      {assigns.date_range, ws, span}
+    else
+      _ ->
+        range = snap_range_for_columns(assigns.date_range, day_px)
+        {range, range.first, (Date.diff(range.last, range.first) + 1) * 1.0}
+    end
+  end
+
+  # Snap a whole-day axis OUTWARD to full column boundaries so :week / :month
+  # granularity renders complete, boundary-aligned columns instead of ragged
+  # partial stubs (a 2-day Sat–Sun column, a mid-week date label). Finer
+  # granularities (:day and below) are already 1-day-per-column, so the range is
+  # returned unchanged. The granularity is read from the SAME `column_zoom_for/2`
+  # the column builder uses, so a coarse density / budget-capped demotion to
+  # :week / :month snaps too. Snapping only widens the range by <1 column, so for
+  # any realistic span the granularity the builder picks post-snap matches the one
+  # decided here. (Only at the extreme column-budget boundary — a multi-decade
+  # range — could the few extra days tip the builder one step coarser; columns
+  # still tile to content_width via `days_in_chunk * day_px`, so that's a cosmetic
+  # label mismatch, never misalignment.) Bars keep their true dates in the axis.
+  defp snap_range_for_columns(%Date.Range{} = range, day_px) do
+    total_days = Date.diff(range.last, range.first) + 1
+
+    case column_zoom_for(day_px, total_days) do
+      :week -> Date.range(beginning_of_week(range.first), end_of_week(range.last))
+      :month -> Date.range(Date.beginning_of_month(range.first), Date.end_of_month(range.last))
+      _ -> range
+    end
+  end
+
+  # ISO weeks start on Monday (`Date.day_of_week/1` → Monday = 1 … Sunday = 7).
+  defp beginning_of_week(%Date{} = d), do: Date.add(d, -(Date.day_of_week(d) - 1))
+  defp end_of_week(%Date{} = d), do: Date.add(d, 7 - Date.day_of_week(d))
+
   # Choose the COLUMN granularity for a given continuous density (px/day),
   # independent of any named zoom. This is what makes continuous zoom work: the
   # density can sit anywhere between the named presets, and the header columns
@@ -1997,13 +2044,25 @@ defmodule PhoenixLiveGantt do
   defp column_count(:week, days), do: ceil(days / 7)
   defp column_count(:month, days), do: ceil(days / 30)
 
+  # A week column's date span, e.g. "Apr 27 – May 3" (cross-month) or "Apr 6 – 12"
+  # (within one month). Replaces the old "W18" ISO ordinal — a date range reads
+  # without the viewer having to map a week number back to dates. The axis snaps
+  # to whole weeks (see `snap_range_for_columns/2`), so `days_count` is normally
+  # 7 (Mon–Sun); a degenerate partial chunk still labels its true span.
   defp week_label(first_day, days_count, tr) do
-    if days_count >= 5 do
-      {_year, week} = :calendar.iso_week_number(Date.to_erl(first_day))
-      "W#{week}"
-    else
-      "#{I18n.month_name_short(first_day.month, tr)} #{first_day.day}"
-    end
+    last_day = Date.add(first_day, max(days_count - 1, 0))
+    week_range_label(first_day, last_day, tr)
+  end
+
+  defp week_range_label(day, day, tr), do: "#{I18n.month_name_short(day.month, tr)} #{day.day}"
+
+  defp week_range_label(start, finish, tr) do
+    finish_label =
+      if start.month == finish.month,
+        do: "#{finish.day}",
+        else: "#{I18n.month_name_short(finish.month, tr)} #{finish.day}"
+
+    "#{I18n.month_name_short(start.month, tr)} #{start.day} – #{finish_label}"
   end
 
   defp month_label(date, tr) do
@@ -2722,6 +2781,11 @@ defmodule PhoenixLiveGantt do
       label_width: label_w,
       label_transform: label_transform,
       color_class: style.color_class,
+      # The arrowHEAD shares the line's hue but is drawn SOLID — its alpha
+      # modifier (e.g. the default `text-base-content/50`) is stripped so the
+      # head fully covers the shaft end instead of letting the line show through
+      # a half-transparent triangle. See `opaque_class/1`.
+      head_color_class: opaque_class(style.color_class),
       stroke_width: style.stroke_width,
       opacity: style.opacity,
       dasharray: style.dasharray,
@@ -2803,6 +2867,24 @@ defmodule PhoenixLiveGantt do
   defp arrowhead_variant_class(:invalid), do: "lg-arrow-invalid"
   defp arrowhead_variant_class(:critical), do: "lg-arrow-critical"
   defp arrowhead_variant_class(:normal), do: "lg-arrow"
+
+  # Strip Tailwind/daisyUI opacity modifiers from a color class so the arrowhead
+  # renders SOLID, even when the line is deliberately subtle. Strips PER TOKEN, so
+  # a multi-token / variant override de-alphas every part — e.g.
+  # `"text-primary/30 dark:text-primary/50"` → `"text-primary dark:text-primary"`
+  # (a solid head in both light and dark) and `"text-base-content/50 font-bold"` →
+  # `"text-base-content font-bold"`. Handles the slash-percentage forms
+  # (`/50`, `/12.5`) and arbitrary values (`/[0.4]`). Intended for the connector
+  # COLOR class; a token with no modifier passes through, so opaque colors are
+  # untouched. (A token's trailing `/n` is treated as opacity — don't pass layout
+  # fractions like `w-1/2` as a connector color.)
+  defp opaque_class(nil), do: nil
+
+  defp opaque_class(class) when is_binary(class) do
+    class
+    |> String.split()
+    |> Enum.map_join(" ", &String.replace(&1, ~r{/(?:\d+(?:\.\d+)?|\[[^\]]*\])$}, ""))
+  end
 
   # Bundle source/target endpoint info with per-connector routing
   # overrides (or fallbacks to ctx defaults) so individual builders see

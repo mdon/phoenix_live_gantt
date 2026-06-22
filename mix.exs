@@ -1,7 +1,7 @@
 defmodule PhoenixLiveGantt.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @description "Phoenix LiveView Gantt chart with dependency arrows, sub-projects, and click-to-detail popovers"
   @source_url "https://github.com/mdon/phoenix_live_gantt"
 
