@@ -3993,11 +3993,19 @@ defmodule PhoenixLiveGantt do
     |> Enum.min_by(fn x -> abs(x - preferred) end, fn -> nil end)
   end
 
-  # Leftmost clear x for an outer-gutter descent: just left of the leftmost
+  # Clear x for an outer-gutter descent: a full elbow left of the leftmost
   # obstacle (which puts it left of ALL of them), as long as that stays on the
   # canvas. `nil` → no usable gutter, caller keeps the standard detour.
+  #
+  # A full elbow (not just the trunk clearance) matters for SIBLINGS: another
+  # arrow from the same source that enters the leftmost obstacle approaches it
+  # from `left - elbow`. Landing the gutter there makes the two SHARE the
+  # descending line — the sibling branches off toward its target while the
+  # gutter continues down — instead of the gutter crossing the sibling's
+  # approach shaft and arrowhead. (With no sibling it's just a slightly roomier
+  # gutter; still left of every obstacle, so still clear.)
   defp outer_gutter_x(bars) do
-    left = (bars |> Enum.map(& &1.x_left) |> Enum.min()) - @trunk_clearance_px
+    left = (bars |> Enum.map(& &1.x_left) |> Enum.min()) - @elbow_px
 
     if left >= @axis_pad_px and trunk_clearance(left, bars) >= @trunk_min_clearance_px, do: left
   end
