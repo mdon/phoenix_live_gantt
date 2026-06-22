@@ -3540,19 +3540,89 @@ defmodule PhoenixLiveGantt do
         ctx
       )
 
-    d = PathFormat.detour(x1, y1, stem_out, detour_y, stem_in, y2, arrow_stop)
+    # Pick the descent: the standard 5-segment detour, or — when its stem can
+    # only hug a bar edge on a tight staircase — the 7-segment outer-gutter.
+    {d, leg_y, leg_left} =
+      fs_detour_or_gutter(
+        x1,
+        y1,
+        stem_out,
+        stem_in,
+        detour_y,
+        y2,
+        arrow_stop,
+        src_bottom,
+        dir_sign,
+        route,
+        ctx
+      )
 
-    # Label lives on the horizontal detour leg — slide along x to find
+    # Label lives on the (bottom) horizontal leg — slide along x to find
     # a clear position if the center would overlap a bar.
     segment = %{
       kind: :horizontal,
-      fixed: detour_y,
-      min: min(stem_out, stem_in),
-      max: max(stem_out, stem_in)
+      fixed: leg_y,
+      min: min(leg_left, stem_in),
+      max: max(leg_left, stem_in)
     }
 
     {label_x, label_y, label_transform} = place_label(segment, route, ctx)
     {d, label_x, label_y, label_transform}
+  end
+
+  # Build the descent for an FS detour, returning `{d, leg_y, leg_left}` (the
+  # latter two locate the horizontal leg for label placement).
+  #
+  # If the descending stem can ONLY hug a bar's edge — a tight staircase of
+  # consecutive bars with no channel anywhere — and a clear OUTER gutter exists
+  # left of those bars, route the descent down the gutter (a 7-segment path) so
+  # the trunk stays fully clear of every task rather than running flush along an
+  # edge. Only for a forward-and-down skip; everything else keeps the standard
+  # 5-segment detour.
+  defp fs_detour_or_gutter(
+         x1,
+         y1,
+         stem_out,
+         stem_in,
+         detour_y,
+         y2,
+         arrow_stop,
+         src_bottom,
+         dir_sign,
+         route,
+         ctx
+       ) do
+    descent_bars = bars_crossing_span(ctx.bars, y1, detour_y, route.exclude_ids)
+
+    gutter_x =
+      if Map.get(ctx, :avoid_collisions, true) and dir_sign > 0 and arrow_stop > x1 and
+           descent_bars != [] and
+           trunk_clearance(stem_out, descent_bars) < @trunk_min_clearance_px do
+        outer_gutter_x(descent_bars)
+      end
+
+    if gutter_x do
+      exit_stub = x1 + Map.get(route, :exit_stem, @elbow_px)
+
+      # Re-clear the (now longer) bottom leg running from the gutter across to
+      # the target approach.
+      leg_y =
+        push_detour_for_horizontal_leg(
+          detour_y,
+          gutter_x,
+          stem_in,
+          y2,
+          dir_sign,
+          ctx.row_px,
+          route.exclude_ids,
+          ctx
+        )
+
+      {PathFormat.gutter(x1, y1, exit_stub, src_bottom, gutter_x, leg_y, stem_in, y2, arrow_stop),
+       leg_y, gutter_x}
+    else
+      {PathFormat.detour(x1, y1, stem_out, detour_y, stem_in, y2, arrow_stop), detour_y, stem_out}
+    end
   end
 
   # Precompute a lane index per backward FS connector so multiple arrows
@@ -3921,6 +3991,15 @@ defmodule PhoenixLiveGantt do
       x >= min_x and x <= max_x and trunk_clearance(x, bars) >= clearance
     end)
     |> Enum.min_by(fn x -> abs(x - preferred) end, fn -> nil end)
+  end
+
+  # Leftmost clear x for an outer-gutter descent: just left of the leftmost
+  # obstacle (which puts it left of ALL of them), as long as that stays on the
+  # canvas. `nil` → no usable gutter, caller keeps the standard detour.
+  defp outer_gutter_x(bars) do
+    left = (bars |> Enum.map(& &1.x_left) |> Enum.min()) - @trunk_clearance_px
+
+    if left >= @axis_pad_px and trunk_clearance(left, bars) >= @trunk_min_clearance_px, do: left
   end
 
   # Filter obstacles down to those whose y-range overlaps the trunk's

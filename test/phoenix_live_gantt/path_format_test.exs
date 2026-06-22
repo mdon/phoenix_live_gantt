@@ -16,6 +16,20 @@ defmodule PhoenixLiveGantt.PathFormatTest do
     end
   end
 
+  describe "gutter/9" do
+    test "builds the canonical 7-segment outer-gutter path" do
+      assert PathFormat.gutter(100, 20, 110, 40, 80, 120, 160, 140, 180) ==
+               "M 100 20 H 110 V 40 H 80 V 120 H 160 V 140 H 180"
+    end
+
+    test "parse/1 leaves it :unknown (shape is ambiguous with a multi-hop jog)" do
+      d = PathFormat.gutter(100, 20, 110, 40, 80, 120, 160, 140, 180)
+      assert %{kind: :unknown} = PathFormat.parse(d)
+      # ...but the generic walker still reads its true terminal for the arrowhead.
+      assert %{x: 180, y: 140, dir: :east} = PathFormat.terminal(d)
+    end
+  end
+
   describe "parse/1" do
     test "round-trips a forward path" do
       d = PathFormat.forward(100, 20, 130, 60, 180)

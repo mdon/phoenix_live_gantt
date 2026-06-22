@@ -2068,25 +2068,34 @@ defmodule PhoenixLiveGanttTest do
       path = sc_path(html, "A", "E")
       cw = sc_content_width(html)
 
-      # The fix forces the detour (5-segment M H V H V H) rather than the
-      # 3-segment forward (M H V H) trunk that pierced.
-      assert path =~ ~r/^M \d+ \d+ H \d+ V \d+ H \d+ V \d+ H \d+$/,
-             "A->E should route via a detour, got #{path}"
+      # It must NOT take the straight 3-segment forward trunk (which pierced) —
+      # it routes AROUND, via a detour or the outer-gutter (>= 2 verticals).
+      refute path =~ ~r/^M \d+ \d+ H \d+ V \d+ H \d+$/,
+             "A->E should route around, not take a straight forward trunk: #{path}"
 
-      # And no vertical actually runs THROUGH an intervening bar — x strictly
-      # inside the bar AND the vertical's y-span overlaps that bar's row band.
-      # (An x at a bar edge, or a vertical that only descends through a lower
-      # row, is fine.) Default row height is 40px; B/C/D sit in rows 1/2/3.
+      # Every vertical that crosses an intervening bar's row band must clear it
+      # by at least 1px — no pierce, no flush hug. Whether that's a clearance-
+      # detour (room past the staircase) or the outer-gutter (a tight staircase
+      # with a gate forcing a 0px junction) depends on the bar widths; the
+      # followability invariant holds either way. (Row height 40px; B/C/D in
+      # rows 1/2/3.)
       verts = sc_verticals(String.split(path))
 
       for {id, row} <- [{"B", 1}, {"C", 2}, {"D", 3}] do
         {l, r} = sc_bar_box(html, id, cw)
         {band_top, band_bottom} = {row * 40, (row + 1) * 40}
 
-        refute Enum.any?(verts, fn {x, y1, y2} ->
-                 x > l and x < r and y1 < band_bottom and y2 > band_top
-               end),
-               "A->E verticals #{inspect(verts)} should not pierce #{id} [#{l}..#{r}] in rows [#{band_top}..#{band_bottom}]"
+        for {x, y1, y2} <- verts, y1 < band_bottom and y2 > band_top do
+          clearance =
+            cond do
+              x <= l -> l - x
+              x >= r -> x - r
+              true -> -1
+            end
+
+          assert clearance >= 1,
+                 "A->E vertical at x=#{x} (rows #{y1}..#{y2}) must clear #{id} [#{l}..#{r}] by >=1px, got #{clearance}"
+        end
       end
     end
   end
